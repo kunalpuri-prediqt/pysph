@@ -1,0 +1,115 @@
+{
+  "accepted_pairs": {
+    "multilevel": 75966,
+    "uniform": 75966
+  },
+  "build": {
+    "multilevel": {
+      "median_s": 0.0015458049965673126,
+      "min_s": 0.0014563420045305975,
+      "samples_s": [
+        0.04207183999824338,
+        0.0018624049989739433,
+        0.0015142609991016798,
+        0.0015458049965673126,
+        0.0014563420045305975
+      ]
+    },
+    "uniform": {
+      "median_s": 0.0006865840041427873,
+      "min_s": 0.0005270629990263842,
+      "samples_s": [
+        0.0007462389985448681,
+        0.0005270629990263842,
+        0.0005481830012286082,
+        0.0006865840041427873,
+        0.0008128129993565381
+      ]
+    }
+  },
+  "candidate_pairs": {
+    "multilevel": 774536,
+    "uniform": 23049608
+  },
+  "case": "large-slab",
+  "dense_over_saved_state": 0.4937901117185643,
+  "dense_over_sparse_estimate": 1.1005231441626382,
+  "dense_persistent_bytes": 66476,
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device_arch": 89,
+  "fine_particles": 4800,
+  "fused_wcsph": {
+    "multilevel": {
+      "median_s": 0.0063914170023053885,
+      "min_s": 0.006328663002932444,
+      "samples_s": [
+        0.006472148001194,
+        0.006400144993676804,
+        0.0063914170023053885,
+        0.006328663002932444,
+        0.006329198004095815
+      ]
+    },
+    "multilevel_sha256": "fc900610bb1b47e1e278147aba880c50bcb7987e76d96368e94dfdbd594b7256",
+    "multilevel_sum": -9746392.112524375,
+    "sum_relative_delta": 7.428883856981328e-07,
+    "uniform": {
+      "median_s": 0.009127819001150783,
+      "min_s": 0.00910451399977319,
+      "samples_s": [
+        0.009212423996359576,
+        0.00910451399977319,
+        0.00912513599905651,
+        0.009304977000283543,
+        0.009127819001150783
+      ]
+    },
+    "uniform_sha256": "9bd53f7ba51f8647bdb634bd05096b12c0a1598f300b77ebfd70c7aea6abdc01",
+    "uniform_sum": -9746384.872048251
+  },
+  "levels": 5,
+  "mempool_current_bytes": {
+    "after_multilevel": 874220,
+    "after_uniform": 915428,
+    "before_builds": 807744,
+    "multilevel_delta": 66476
+  },
+  "metadata_readback_bytes_per_build": 164,
+  "occupied_cells": 1360,
+  "particles": 4808,
+  "precision": "fp32",
+  "python": "3.14.4",
+  "saved_wcsph_state_bytes": 134624,
+  "sparse_sorted_estimate_bytes": 60404,
+  "summation_density": {
+    "multilevel": {
+      "median_s": 0.0033782539976527914,
+      "min_s": 0.003359548994922079,
+      "samples_s": [
+        0.0034070119945681654,
+        0.003359548994922079,
+        0.003361800998391118,
+        0.003392407001229003,
+        0.0033782539976527914
+      ]
+    },
+    "multilevel_sha256": "3a2cf3eb55953f9ff9b5c22c62f2b6954904073d0315e9ab04151fa01be52daa",
+    "multilevel_sum": 78718769.20917916,
+    "sum_relative_delta": 4.058219021021207e-09,
+    "uniform": {
+      "median_s": 0.006851461999758612,
+      "min_s": 0.006752392997441348,
+      "samples_s": [
+        0.0067668750052689575,
+        0.0072201290022348985,
+        0.006851461999758612,
+        0.006752392997441348,
+        0.00689996599976439
+      ]
+    },
+    "uniform_sha256": "8a9b425ec1ffdd916263f55c79d87f54822805436b862d548369c3784d9840ea",
+    "uniform_sum": 78718769.52863717
+  },
+  "total_dense_cells": 3479,
+  "warp_version": "1.14.0"
+}

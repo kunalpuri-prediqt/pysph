@@ -158,3 +158,21 @@ selected here.
 - Eliminate the per-`update()` metadata readback for the production path.
 - Select production level ratios / split policy only after the P0 stencil
   convention mismatch is resolved (later ADRs).
+
+## Decision-gate result - 2026-07-14
+
+The fp32 dense-memory experiment
+`experiments/2026-07-13_warp-multilevel-nnps-dense-memory-gate` keeps this ADR
+**Proposed**. Connected refinement passes: a 4,808-particle slab used 66,476
+bytes of persistent dense NNPS state (49.4% of saved WCSPH state), reduced
+candidate checks 29.8x, and lowered warm build-plus-fused time 19.1%. Exact
+accepted-pair counts matched the uniform grid.
+
+The required kill case fails: two disconnected fine patches caused their
+level AABB to allocate 64,343 cells for 694 particles. Dense NNPS state was
+520,476 bytes, 26.8x the saved WCSPH state and 52.8x an estimated sorted-sparse
+representation; runtime was also worse. Therefore dense flattened grids are a
+prototype representation for compact/connected levels, not an acceptable
+universal production decision. Before this ADR can become Accepted, implement
+and measure sparse keyed cells or a per-level dense/sparse hybrid while
+preserving the exact traversal contract.

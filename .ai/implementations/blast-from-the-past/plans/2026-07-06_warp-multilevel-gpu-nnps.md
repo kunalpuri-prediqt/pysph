@@ -166,7 +166,8 @@ only `x/y/z/h`; no daughter stencil is embedded in this checkpoint.
 ### 5. Validate equations, transfer behavior, and scaling
 
 - Compare full per-particle neighbor sets against `BruteForceWarpNNPS` for all
-  fixtures in fp32 and fp64.
+  fixtures in fp32. The implementation remains dtype-generic, but fp64 is not
+  a delivery gate for this GPU-first prototype.
 - Compare multilevel versus flat/uniform-grid outputs for summation density,
   fused pressure/viscosity/continuity, and adaptive CFL factors.
 - Instrument or monkeypatch device-array host access so steady
@@ -189,7 +190,7 @@ only `x/y/z/h`; no daughter stencil is embedded in this checkpoint.
 - Exact neighbor-index set parity with brute force for every destination in all
   deterministic fixtures, including four levels spanning `h_max/h_min=16`.
 - No duplicate source index is visited for a destination.
-- fp32/fp64 SPH outputs match the flat/brute oracle at dtype-derived tolerance;
+- fp32 SPH outputs match the flat/brute oracle at dtype-derived tolerance;
   adaptive timestep matches after scalar rounding.
 - Existing uniform-grid, periodic, generated-source golden, elliptical-drop,
   fixed-wall dam-break, and rigid-coupling tests remain unchanged.
@@ -327,5 +328,14 @@ does not start until they pass.
   routing, with multilevel-mode summation density matching the uniform grid in
   2D and 3D and a periodic-multilevel guard. Suites separate: nnps 34,
   codegen 10, sph 57. Remaining: adaptive-timestep + fused continuity/pressure
-  multilevel parity, fp64 exercise, ADR-0007 accept after the dense-vs-sparse
-  memory check.
+  multilevel parity and ADR-0007 accept after the dense-vs-sparse memory check.
+
+## Scope amendment - 2026-07-13
+
+The owner narrowed validation to fp32 so the prototype stays aligned with the
+intended production precision and avoids unnecessary fp64 JIT cost. Existing
+dtype-generic code is not removed, but no new fp64 work is required.
+
+Owner direction, verbatim:
+
+> why fp64. we want to remain fp32 at most as possible

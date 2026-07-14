@@ -547,10 +547,9 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
     localized refinement, because a small number of coarse particles no longer
     forces coarse cells over dense fine regions.
 
-    This prototype builds the per-level metadata on the host (reading device
-    coordinates back once per ``update()``); moving level assignment and the
-    per-level AABB reductions onto the GPU for full device residency is a
-    separate step that preserves these kernels and only changes ``update()``.
+    Level assignment plus per-level count, max-h, and AABB reductions run on
+    the GPU.  Only O(nlevels) scalar metadata is read back to size the dense
+    grids; per-particle coordinates and smoothing lengths remain on device.
     """
 
     def __init__(self, dim, particles, radius_scale=2.0, h_ref=None,

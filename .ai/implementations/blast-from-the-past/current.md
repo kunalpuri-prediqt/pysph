@@ -1,6 +1,6 @@
 # Current - blast-from-the-past
 
-Updated: 2026-07-07T09:00:00 CEST by claude
+Updated: 2026-07-14T00:05:57 CEST by codex
 
 **Status:** The Warp backend has device-mirrored particle state, grid-direct
 3D WCSPH, generated/fused equation groups, periodic neighbors, validated 2D
@@ -37,11 +37,23 @@ fixture shows ~9x lower candidate work (197k vs 1.77M pairs) with identical
 accepted sets, and `warp_codegen` gained `neighbor_mode='multilevel'` so
 generated SPH equation groups consume the multilevel structure directly
 (summation density matches the uniform grid in 2D and 3D). Multilevel + periodic
-is refused. Remaining before ADR-0007 is Accepted: adaptive-timestep + fused-
-group multilevel parity, fp64 exercise, and the dense-vs-sparse memory check.
+is refused. fp32 adaptive-timestep plus fused pressure/viscosity/continuity/XSPH
+multilevel parity now passes in 3D. The owner explicitly deferred fp64.
 
-**Latest validation:** Final P3 Warp SPH suite: `54 passed, 2 warnings`.
-The 7,458-particle coupled first-plunge transient ran 241 steps to `t=0.200603`,
+The dense-memory gate rejected dense-only storage as a universal production
+representation. A connected 4,808-particle slab used 49.4% of saved-state
+memory, cut candidates 29.8x, and lowered warm build-plus-fused time 19.1%.
+But two disconnected fine patches allocated 64,343 cells for 694 particles:
+26.8x saved-state memory and 52.8x the sorted-sparse estimate, with worse
+runtime. ADR-0007 remains Proposed pending sparse keyed cells or a per-level
+dense/sparse hybrid.
+
+**Latest validation:** fp32 multilevel SPH subset: `4 passed`; Warp NNPS:
+`34 passed`; codegen: `10 passed`. The monolithic SPH file hit the documented
+in-process PTX-JIT accumulation limit after 2,988s; focused validation is the
+operational gate on this WSL2 host. Final P3 Warp SPH suite before this addition:
+`54 passed, 2 warnings`. The 7,458-particle coupled first-plunge transient ran
+241 steps to `t=0.200603`,
 remained finite with device error 0, moved/rotated the body from computed fluid
 reaction, and preserved relative geometry to `1.90e-6`. The review image and
 metrics are in
@@ -50,9 +62,10 @@ metrics are in
 **Open approvals:** P3 and 3D dam-break reviews are approved by @prabhu. PR
 #435 remains an upstream publication item, not a local review blocker.
 
-**Next action:** Continue the multilevel milestone: adaptive-timestep and fused
-continuity/pressure/viscosity multilevel parity, an fp64 exercise, then the
-dense-vs-sparse memory check to move ADR-0007 to Accepted. Run the three warp
+**Next action:** Continue the multilevel milestone with a sparse keyed-cell
+oracle and a measured per-level dense/sparse hybrid; preserve exact traversal
+and the connected-level dense fast path before moving ADR-0007 to Accepted.
+Run the three warp
 test files SEPARATELY (`test_warp_nnps.py` 34, `test_warp_codegen.py` 10,
 `test_warp_sph.py` 57) -- the combined single-process command hangs
 pre-existingly on the WSL2 PTX-JIT. P0 stencil-convention reconciliation remains

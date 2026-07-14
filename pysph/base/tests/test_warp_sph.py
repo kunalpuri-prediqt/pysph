@@ -2450,6 +2450,76 @@ def test_warp_summation_density_multilevel_matches_grid_3d():
     assert np.allclose(rho_ml, rho_g, rtol=1e-4, atol=1e-5), (rho_ml, rho_g)
 
 
+def _make_multilevel_wcsph_pa():
+    from compyle.api import get_config
+
+    cfg = get_config()
+    old = cfg.use_double
+    cfg.use_double = False
+    try:
+        # A genuine 3D two-level cloud with non-zero velocity, pressure, and
+        # acceleration components.  The values are deliberately asymmetric so
+        # every fused output and both adaptive-timestep factors are exercised.
+        x = np.asarray([0.00, 0.08, 0.16, 0.04, 0.12, 0.20, 0.06, 0.18])
+        y = np.asarray([0.00, 0.03, 0.01, 0.11, 0.14, 0.09, 0.20, 0.22])
+        z = np.asarray([0.00, 0.05, 0.12, 0.03, 0.16, 0.20, 0.09, 0.24])
+        h = np.asarray([0.10, 0.10, 0.10, 0.10, 0.20, 0.20, 0.20, 0.20])
+        return get_particle_array(
+            name='fluid', x=x, y=y, z=z, h=h,
+            m=np.asarray([0.8, 1.1, 0.9, 1.2, 2.1, 1.8, 2.3, 1.9]),
+            rho=np.asarray([0.98, 1.03, 1.01, 0.96, 1.08, 1.02, 0.94, 1.06]),
+            p=np.asarray([1.2, 2.1, 1.6, 0.7, 2.8, 1.9, 0.5, 2.4]),
+            cs=np.asarray([4.8, 5.1, 5.0, 4.9, 5.2, 5.0, 4.7, 5.1]),
+            u=np.asarray([0.3, -0.2, 0.1, 0.4, -0.1, 0.2, -0.3, 0.05]),
+            v=np.asarray([0.0, 0.15, -0.1, 0.2, -0.2, 0.1, 0.05, -0.15]),
+            w=np.asarray([0.1, -0.05, 0.2, -0.1, 0.15, -0.2, 0.05, 0.12]),
+            au=np.asarray([0.5, -0.2, 0.1, 0.3, -0.4, 0.2, -0.1, 0.6]),
+            av=np.asarray([0.1, 0.3, -0.2, 0.0, 0.4, -0.1, 0.2, -0.3]),
+            aw=np.asarray([-0.2, 0.1, 0.3, -0.1, 0.2, 0.0, -0.4, 0.1]),
+            arho=np.zeros(x.size), ax=np.zeros(x.size), ay=np.zeros(x.size),
+            az=np.zeros(x.size), backend='warp',
+        )
+    finally:
+        cfg.use_double = old
+
+
+def test_warp_multilevel_fused_wcsph_and_adaptive_timestep_match_grid_3d():
+    ml_pa = _make_multilevel_wcsph_pa()
+    grid_pa = _make_multilevel_wcsph_pa()
+    ml = MultilevelGridWarpNNPS(
+        dim=3, particles=[ml_pa], radius_scale=2.0,
+        h_ref=0.1, level_ratio=2.0, nlevels=2,
+    )
+    grid = UniformGridWarpNNPS(
+        dim=3, particles=[grid_pa], radius_scale=2.0,
+    )
+    kwargs = dict(alpha=0.15, beta=0.05, eps=0.4, c0=5.0,
+                  kernel='cubic', push=True)
+    compute_wcsph_accel_continuity(
+        ml, neighbor_mode='multilevel', **kwargs)
+    compute_wcsph_accel_continuity(grid, neighbor_mode='grid', **kwargs)
+
+    cfl_kwargs = dict(c0=5.0, cfl=0.3, dt_min=1.0e-8, dt_max=0.1,
+                      push=False)
+    dt_ml = compute_wcsph_adaptive_timestep(
+        ml, neighbor_mode='multilevel', **cfl_kwargs)
+    dt_grid = compute_wcsph_adaptive_timestep(
+        grid, neighbor_mode='grid', **cfl_kwargs)
+    outputs = ('au', 'av', 'aw', 'arho', 'ax', 'ay', 'az',
+               'dt_cfl', 'dt_force')
+    ml_pa.gpu.pull(*outputs)
+    grid_pa.gpu.pull(*outputs)
+
+    rtol = 2.0e-4
+    atol = 2.0e-6
+    for name in outputs:
+        assert np.allclose(
+            getattr(ml_pa, name), getattr(grid_pa, name),
+            rtol=rtol, atol=atol,
+        ), name
+    assert np.isclose(dt_ml, dt_grid, rtol=rtol, atol=atol)
+
+
 def test_warp_multilevel_rejects_periodic_domain():
     # Per-level periodic tiling is deferred (ADR-0007): a multilevel run over a
     # periodic box must raise, not silently use the non-periodic walk.
