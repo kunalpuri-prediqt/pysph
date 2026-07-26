@@ -4,7 +4,7 @@ id: ADR-0007
 date: 2026-07-07
 author: @kunalpuri-prediqt
 scope: gpu-nnps
-status: Proposed
+status: Accepted
 supersedes: []
 relates_to: [ADR-0003, ADR-0004]
 depends_on: [ADR-0004]
@@ -48,12 +48,14 @@ alongside the uniform grid, with these choices:
   clipped. Each populated level's conservative support bound is
   `radius_scale * max(h in level)`.
 
-- **Flattened per-level grids.** Each populated level gets its own padded
+- **Per-level dense/sparse hybrid.** Each populated level gets its own padded
   origin (min-coordinate minus one cell), cell size (its support bound), and
-  `(nx,ny,nz)`. All levels are flattened into one global cell space via a
-  per-level `cell_offset`. The grid is built with the existing
-  count -> exclusive-scan -> scatter kernels over that global cell space. Empty
-  levels allocate no cells (`nx=0`) and are skipped.
+  `(nx,ny,nz)`. Device radix sort plus run-length encoding measures occupied
+  logical cells. Levels with `logical_cells / occupied_cells > 4` use sorted
+  int32 cell keys, starts/counts, and device `lower_bound`; other levels use
+  compact flattened dense count -> scan -> scatter storage. The threshold is a
+  configurable prototype default. Empty levels allocate no cells and are
+  skipped.
 
 - **Device-built construction / permitted readback.** Level assignment and the
   per-level count, max-`h`, and AABB (min/max per axis) reductions run in one
@@ -176,3 +178,20 @@ prototype representation for compact/connected levels, not an acceptable
 universal production decision. Before this ADR can become Accepted, implement
 and measure sparse keyed cells or a per-level dense/sparse hybrid while
 preserving the exact traversal contract.
+
+## Acceptance result - 2026-07-26
+
+Experiment `2026-07-26_warp-multilevel-nnps-sparse-hybrid` resolves the failed
+gate, so this ADR is **Accepted**. The two-patch case retains exact 10,956
+accepted pairs while persistent representation bytes fall from 520,552
+forced-dense to 8,900 hybrid, below the 19,432-byte saved WCSPH state. Connected
+fine levels remain dense in all three connected layouts.
+
+The hybrid build and traversal are device-resident except for the existing
+`O(nlevels)` metadata/occupied-count readback. Forced-sparse generated 3D
+summation density and fused WCSPH/adaptive-timestep parity pass. Sparse
+traversal is deliberately a memory fallback: in the disconnected 694-particle
+case its fused consumer is 3.65x slower than forced dense, while connected
+levels retain the dense fast path. Optimizing sparse range traversal and
+eliminating per-update metadata readback remain follow-ups, not correctness or
+memory blockers for this architectural decision.

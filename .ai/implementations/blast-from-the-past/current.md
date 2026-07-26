@@ -1,6 +1,6 @@
 # Current - blast-from-the-past
 
-Updated: 2026-07-14T00:05:57 CEST by codex
+Updated: 2026-07-26T22:03:10 CEST by codex
 
 **Status:** The Warp backend has device-mirrored particle state, grid-direct
 3D WCSPH, generated/fused equation groups, periodic neighbors, validated 2D
@@ -27,7 +27,7 @@ developed 150.147 kPa maximum obstacle pressure, and kept obstacle device
 coordinates bit-identical.
 
 The multilevel-GPU-NNPS milestone (`plans/2026-07-06_warp-multilevel-gpu-nnps.md`,
-status in-progress) has landed steps 1-3 and ADR-0007 (Proposed). New module
+status completed) has landed steps 1-3 and ADR-0007 (Accepted). New module
 `pysph/base/warp_multilevel_nnps.py` provides `MultilevelGridWarpNNPS`: discrete
 half-open smoothing-length levels, a flattened per-level global cell list, and
 exact variable-stencil cross-level traversal. Construction is device-resident
@@ -40,16 +40,18 @@ generated SPH equation groups consume the multilevel structure directly
 is refused. fp32 adaptive-timestep plus fused pressure/viscosity/continuity/XSPH
 multilevel parity now passes in 3D. The owner explicitly deferred fp64.
 
-The dense-memory gate rejected dense-only storage as a universal production
-representation. A connected 4,808-particle slab used 49.4% of saved-state
-memory, cut candidates 29.8x, and lowered warm build-plus-fused time 19.1%.
-But two disconnected fine patches allocated 64,343 cells for 694 particles:
-26.8x saved-state memory and 52.8x the sorted-sparse estimate, with worse
-runtime. ADR-0007 remains Proposed pending sparse keyed cells or a per-level
-dense/sparse hybrid.
+The per-level dense/sparse hybrid resolves the dense-memory kill case. GPU
+radix-sort/run-length encoding measures occupied cells; levels with
+`logical_cells / occupied_cells > 4` use sorted int32 keys and device
+lower-bound lookup, while compact levels retain dense count/scan/scatter.
+Disconnected patches fell from 520,552 forced-dense bytes to 8,900 hybrid
+bytes, below the 19,432-byte saved WCSPH state, with exact accepted pairs.
+Sparse lookup is a memory fallback (3.65x slower fused on that tiny case), not a
+general speed claim; connected fine levels remain dense.
 
 **Latest validation:** fp32 multilevel SPH subset: `4 passed`; Warp NNPS:
-`34 passed`; codegen: `10 passed`. The monolithic SPH file hit the documented
+`35 passed`; codegen: `10 passed`. Forced-sparse generated 3D density and the
+fused WCSPH/adaptive-timestep parity gate pass. The monolithic SPH file hit the documented
 in-process PTX-JIT accumulation limit after 2,988s; focused validation is the
 operational gate on this WSL2 host. Final P3 Warp SPH suite before this addition:
 `54 passed, 2 warnings`. The 7,458-particle coupled first-plunge transient ran
@@ -59,14 +61,16 @@ reaction, and preserved relative geometry to `1.90e-6`. The review image and
 metrics are in
 `reviews/2026-06-20_warp-liu-fluid-rigid-coupling-p3.md`.
 
-**Open approvals:** P3 and 3D dam-break reviews are approved by @prabhu. PR
-#435 remains an upstream publication item, not a local review blocker.
+**Open approvals:** P3 and 3D dam-break reviews are approved by @prabhu. The
+sparse/hybrid checkpoint has prototype-owner authorization for a local commit.
+PR #435 has no cumulative exact `@prabhu: LGTM`, so pushing this checkpoint to
+that upstream PR remains blocked.
 
-**Next action:** Continue the multilevel milestone with a sparse keyed-cell
-oracle and a measured per-level dense/sparse hybrid; preserve exact traversal
-and the connected-level dense fast path before moving ADR-0007 to Accepted.
-Run the three warp
-test files SEPARATELY (`test_warp_nnps.py` 34, `test_warp_codegen.py` 10,
+**Next action:** Review and commit the completed ADR-0007 hybrid checkpoint,
+then write the next Tier 2 plan for runtime APR particle allocation,
+split/merge, conservation, and adaptive dam-break integration. Reconcile the
+P0 stencil convention before locking production split weights. Run the three warp
+test files SEPARATELY (`test_warp_nnps.py` 35, `test_warp_codegen.py` 10,
 `test_warp_sph.py` 57) -- the combined single-process command hangs
 pre-existingly on the WSL2 PTX-JIT. P0 stencil-convention reconciliation remains
 a prerequisite for production APR weights; floating-body P4 remains queued.

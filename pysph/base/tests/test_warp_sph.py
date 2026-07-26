@@ -2440,12 +2440,14 @@ def test_warp_summation_density_multilevel_matches_grid_3d():
     g_pa = get_particle_array(name='fluid', x=x, y=y, z=z, h=h, m=m,
                               rho=np.zeros(x.size), backend='warp')
     ml = MultilevelGridWarpNNPS(dim=3, particles=[ml_pa], radius_scale=2.0,
-                                h_ref=0.1, level_ratio=2.0, nlevels=2)
+                                h_ref=0.1, level_ratio=2.0, nlevels=2,
+                                sparse_cell_ratio=1.0)
     grid = UniformGridWarpNNPS(dim=3, particles=[g_pa], radius_scale=2.0)
     rho_ml = warp_sph.compute_summation_density(
         ml, kernel='wendland', neighbor_mode='multilevel').get()
     rho_g = warp_sph.compute_summation_density(
         grid, kernel='wendland', neighbor_mode='grid').get()
+    assert np.any(ml.level_grid_info(0)['storage_mode'] == 1)
     assert np.all(rho_ml > 0.0)
     assert np.allclose(rho_ml, rho_g, rtol=1e-4, atol=1e-5), (rho_ml, rho_g)
 

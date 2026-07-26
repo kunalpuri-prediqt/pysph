@@ -4,7 +4,7 @@ id: 2026-07-06_warp-multilevel-gpu-nnps
 author: @kunalpuri-prediqt
 agent: codex
 created: 2026-07-06T11:18:54 CEST
-status: in-progress
+status: completed
 aspects: [gpu-nnps, warp-backend, particle-memory, validation-benchmarks]
 host_files:
   - pysph/base/warp_nnps.py
@@ -339,3 +339,14 @@ dtype-generic code is not removed, but no new fp64 work is required.
 Owner direction, verbatim:
 
 > why fp64. we want to remain fp32 at most as possible
+
+## Completion note - 2026-07-26
+
+The sparse keyed-cell oracle and measured per-level hybrid close the final
+decision gate. Device radix sort + run-length encoding counts occupied cells;
+levels with `logical_cells / occupied_cells > 4` use sorted sparse keys and
+device `lower_bound`, while compact levels retain dense count/scan/scatter.
+The two-patch kill case fell from 520,552 to 8,900 persistent bytes with exact
+neighbors. NNPS `35 passed`, codegen `10 passed`, and the isolated multilevel
+SPH subset `4 passed`. Runtime particle split/merge remains out of scope and
+requires the next approved plan.

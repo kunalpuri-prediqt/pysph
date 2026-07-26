@@ -1012,3 +1012,70 @@ def test_multilevel_clustered_refinement_candidate_scaling_3d():
     uniform_cand = _uniform_candidate_pairs(uniform, 0, 0)
     assert ml_cand >= accepted            # candidates are a superset of accepted
     assert ml_cand * 4 <= uniform_cand, (ml_cand, uniform_cand, accepted)
+
+
+def test_multilevel_sparse_key_oracle_selects_disconnected_level_3d():
+    # Two fine patches make the level AABB mostly empty. The device-built
+    # sorted-key oracle must count occupied cells exactly and select sparse
+    # storage for that level while retaining dense storage for compact levels.
+    q = np.arange(4, dtype=np.float32) * np.float32(0.04)
+    a = tuple(v.ravel() for v in np.meshgrid(q, q, q, indexing='ij'))
+    b = tuple(v + np.float32(2.0) for v in a)
+    fine = tuple(np.concatenate(pair) for pair in zip(a, b))
+    coarse = np.asarray([
+        (x, y, z) for x in (0.0, 4.0)
+        for y in (0.0, 4.0) for z in (0.0, 4.0)
+    ], dtype=np.float32)
+    x = np.concatenate((fine[0], coarse[:, 0]))
+    y = np.concatenate((fine[1], coarse[:, 1]))
+    z = np.concatenate((fine[2], coarse[:, 2]))
+    h = np.concatenate((
+        np.full(fine[0].size, 0.03, dtype=np.float32),
+        np.full(coarse.shape[0], 0.48, dtype=np.float32),
+    ))
+    pa = get_particle_array(
+        name='fluid', x=x, y=y, z=z, h=h, backend='warp'
+    )
+    ml = MultilevelGridWarpNNPS(
+        dim=3, particles=[pa], radius_scale=2.0, h_ref=0.03,
+        level_ratio=2.0, nlevels=5, sparse_cell_ratio=4.0,
+    )
+    info = ml.sparse_oracle_info(0)
+
+    # Independently reconstruct the logical cell key for every source.
+    grid = ml.level_grid_info(0)
+    sizes = (grid['nx'].astype(np.int64) * grid['ny'].astype(np.int64)
+             * grid['nz'].astype(np.int64))
+    offsets = np.zeros(5, dtype=np.int64)
+    offsets[1:] = np.cumsum(sizes)[:-1]
+    keys = []
+    for i, k in enumerate(grid['levels']):
+        cs = grid['cell_size'][k]
+        ix = int(np.floor((x[i] - grid['origin_x'][k]) / cs))
+        iy = int(np.floor((y[i] - grid['origin_y'][k]) / cs))
+        iz = int(np.floor((z[i] - grid['origin_z'][k]) / cs))
+        keys.append(offsets[k] + ix + iy * grid['nx'][k]
+                    + iz * grid['nx'][k] * grid['ny'][k])
+    assert info['storage_mode'][0] == 1
+    assert info['level_cells'][0] > 4 * info['occupied'][0]
+    sparse_particle_keys = np.asarray([
+        key for key, level in zip(keys, grid['levels'])
+        if info['storage_mode'][level] == 1
+    ], dtype=np.int32)
+    sparse_keys, sparse_counts = np.unique(
+        sparse_particle_keys, return_counts=True
+    )
+    assert np.array_equal(info['keys'], sparse_keys)
+    assert np.array_equal(info['counts'], sparse_counts)
+    assert int(info['counts'].sum()) == sparse_particle_keys.size
+
+    diag = ml.storage_diagnostics(0)
+    assert diag['hybrid_projected_persistent_bytes'] < \
+        diag['dense_persistent_bytes']
+
+    oracle = brute_force_neighbor_sets(
+        (x, y, z, h), (x, y, z, h), radius_scale=2.0, dim=3
+    )
+    ml.set_context(0, 0)
+    for i in range(len(x)):
+        assert np.array_equal(_neighbors(ml, 0, 0, i), oracle[i]), i

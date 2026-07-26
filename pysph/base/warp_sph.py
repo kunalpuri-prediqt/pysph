@@ -2931,10 +2931,9 @@ def _multilevel_grid_launch_args(nnps, src_index, dtype):
     """Ordered multilevel-query launch inputs for a multilevel-direct kernel.
 
     Mirrors the signature emitted by ``warp_codegen`` in ``multilevel`` mode:
-    the flattened global cell list (``cell_starts/cell_counts/cell_particles``)
-    followed by the per-level (length ``nlevels``) metadata arrays -- origins,
-    cell sizes, ``(nx,ny,nz)``, ``cell_offset``, ``support`` -- then ``nlevels``
-    and ``radius_scale``. Built once per source array per ``update()`` by
+    compact dense cell arrays followed by per-level metadata, sparse sorted
+    runs, dense/sparse routing, and ``support`` -- then
+    ``nlevels`` and ``radius_scale``. Built once per source array per ``update()`` by
     ``MultilevelGridWarpNNPS._build_multilevel`` (ADR-0007). Does not overload
     the scalar ``_grid_launch_args`` contract.
     """
@@ -2942,7 +2941,10 @@ def _multilevel_grid_launch_args(nnps, src_index, dtype):
     return [
         ml['starts'], ml['counts'], ml['cell_particles'],
         ml['origin_x'], ml['origin_y'], ml['origin_z'], ml['cell_size'],
-        ml['nx'], ml['ny'], ml['nz'], ml['cell_offset'], ml['support'],
+        ml['nx'], ml['ny'], ml['nz'], ml['dense_offset'],
+        ml['storage_mode'], ml['virtual_offset'], ml['sparse_keys'],
+        ml['sparse_starts'], ml['sparse_counts'], ml['sparse_particles'],
+        np.int32(ml['sparse_cells']), ml['support'],
         np.int32(nnps.nlevels),
         dtype(nnps.radius_scale),
     ]

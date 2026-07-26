@@ -210,6 +210,12 @@ Grid-direct neighbor traversal proof (ADR-0004):
 
 ## Key sub-topics
 
+- ADR-0007 multilevel APR foundation is accepted. Per-level device occupancy
+  selects dense storage for compact levels or sorted int32 keys for sparse
+  levels at a configurable logical/occupied ratio of 4. The disconnected
+  two-patch regression falls from 520,552 to 8,900 persistent bytes with exact
+  neighbors; sparse traversal is slower and remains a memory fallback.
+
 - Existing `GPUNeighborCache` behavior.
 - Existing brute-force, Z-order, stratified SFC, and octree GPU NNPS surfaces.
 - Correctness and performance baselines.

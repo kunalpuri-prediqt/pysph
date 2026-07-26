@@ -1,0 +1,92 @@
+{
+  "accepted_pairs_forced_dense": 30921,
+  "accepted_pairs_hybrid": 30921,
+  "build_forced_dense": {
+    "median_s": 0.0018650199999683537,
+    "min_s": 0.0018111219978891313,
+    "samples_s": [
+      0.0018111219978891313,
+      0.0018650199999683537,
+      0.0018532870017224923,
+      0.002416224997432437,
+      0.001908858997921925
+    ]
+  },
+  "build_hybrid": {
+    "median_s": 0.00219917600043118,
+    "min_s": 0.002029245995800011,
+    "samples_s": [
+      0.03872209400287829,
+      0.002432799003145192,
+      0.00215733700315468,
+      0.002029245995800011,
+      0.00219917600043118
+    ]
+  },
+  "build_plus_fused_forced_dense_median_s": 0.0037744090004707687,
+  "build_plus_fused_hybrid_median_s": 0.0041339800009154715,
+  "case": "slab",
+  "dense_cells_retained": 1296,
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device_arch": 89,
+  "forced_dense_actual_persistent_bytes": 28432,
+  "fused_forced_dense": {
+    "median_s": 0.001909389000502415,
+    "min_s": 0.0018920869988505729,
+    "samples_s": [
+      0.0019493389991112053,
+      0.0018926310003735125,
+      0.0018920869988505729,
+      0.001909389000502415,
+      0.0020845089966314845
+    ]
+  },
+  "fused_hash_forced_dense": "f9a155c8d716993033a84687a01d5826c845357debaab31da51bee682e2fedac",
+  "fused_hash_hybrid": "4807d3a7f8f561381a47d828381f4b70bf40cda95c2fc3640fc97604e556b41b",
+  "fused_hybrid": {
+    "median_s": 0.0019348040004842915,
+    "min_s": 0.001886587000626605,
+    "samples_s": [
+      0.0019348040004842915,
+      0.0019485429947962984,
+      0.0019927040048060007,
+      0.0019052909992751665,
+      0.001886587000626605
+    ]
+  },
+  "fused_max_abs_delta": 0.05078125,
+  "fused_max_abs_over_reference_peak": 1.636770342889789e-07,
+  "fused_max_rel_delta": 1.637208104133606,
+  "fused_relative_l2_delta": 5.3561296508557186e-08,
+  "fused_sum_forced_dense": -3969893.600878019,
+  "fused_sum_hybrid": -3969894.5239623114,
+  "hybrid_actual_persistent_bytes": 25768,
+  "level_cells": [
+    1296,
+    0,
+    0,
+    0,
+    343
+  ],
+  "occupied_cells_by_level": [
+    578,
+    0,
+    0,
+    0,
+    8
+  ],
+  "particles": 1883,
+  "precision": "fp32",
+  "python": "3.14.4",
+  "saved_wcsph_state_bytes": 52724,
+  "sparse_cells_retained": 8,
+  "storage_mode": [
+    0,
+    0,
+    0,
+    0,
+    1
+  ],
+  "threshold_logical_per_occupied": 4.0,
+  "warp_version": "1.14.0"
+}

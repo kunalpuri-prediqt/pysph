@@ -119,7 +119,7 @@
       "file": "decisions/2026-07-07_adr-0007_device-built-multilevel-cell-list-nnps-for-adaptive-resolution.md",
       "id": "ADR-0007",
       "scope": "gpu-nnps",
-      "status": "Proposed"
+      "status": "Accepted"
     }
   ]
 }

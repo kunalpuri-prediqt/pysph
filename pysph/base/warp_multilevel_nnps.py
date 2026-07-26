@@ -18,16 +18,16 @@ except ImportError:  # pragma: no cover
     wp = None
 
 from pysph.base.warp_nnps import (
-    UniformGridWarpNNPS, _copy_i32, _scatter_cell_particles,
+    UniformGridWarpNNPS, _copy_i32,
 )
 
 
 if wp is not None:
     # --- Multilevel (adaptive-resolution) cell-list kernels ---------------
     #
-    # Each source particle lives in exactly one level; per-level grids are
-    # flattened into one global cell space via cell_offset[k]. Traversal loops
-    # over levels and, per level, converts the query radius
+    # Each source particle lives in exactly one level. Compact levels use dense
+    # flattened grids; sparse levels use sorted logical cell keys. Traversal
+    # loops over levels and, per level, converts the query radius
     # max(radius_scale*h_i, support[k]) into a variable cell-index range (not a
     # fixed +/-1 stencil) with a +/-1 guard band, then applies the exact
     # symmetric cutoff. The lengths and fill kernels are structurally identical
@@ -126,7 +126,7 @@ if wp is not None:
 
 
     @wp.kernel
-    def _multilevel_cell_ids_f64(
+    def _ml_virtual_cell_keys_f64(
             x: wp.array(dtype=wp.float64),
             y: wp.array(dtype=wp.float64),
             z: wp.array(dtype=wp.float64),
@@ -138,10 +138,10 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
             dim: wp.int32,
-            cell_ids: wp.array(dtype=wp.int32),
-            counts: wp.array(dtype=wp.int32),
+            keys: wp.array(dtype=wp.int32),
+            particles: wp.array(dtype=wp.int32),
     ):
         i = wp.tid()
         k = level_of[i]
@@ -156,13 +156,13 @@ if wp is not None:
         ix = wp.clamp(ix, wp.int32(0), nx[k] - wp.int32(1))
         iy = wp.clamp(iy, wp.int32(0), ny[k] - wp.int32(1))
         iz = wp.clamp(iz, wp.int32(0), nz[k] - wp.int32(1))
-        cid = cell_offset[k] + ix + iy * nx[k] + iz * nx[k] * ny[k]
-        cell_ids[i] = cid
-        wp.atomic_add(counts, cid, wp.int32(1))
+        keys[i] = (virtual_offset[k] + ix + iy * nx[k]
+                   + iz * nx[k] * ny[k])
+        particles[i] = i
 
 
     @wp.kernel
-    def _multilevel_cell_ids_f32(
+    def _ml_virtual_cell_keys_f32(
             x: wp.array(dtype=wp.float32),
             y: wp.array(dtype=wp.float32),
             z: wp.array(dtype=wp.float32),
@@ -174,10 +174,10 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
             dim: wp.int32,
-            cell_ids: wp.array(dtype=wp.int32),
-            counts: wp.array(dtype=wp.int32),
+            keys: wp.array(dtype=wp.int32),
+            particles: wp.array(dtype=wp.int32),
     ):
         i = wp.tid()
         k = level_of[i]
@@ -192,9 +192,155 @@ if wp is not None:
         ix = wp.clamp(ix, wp.int32(0), nx[k] - wp.int32(1))
         iy = wp.clamp(iy, wp.int32(0), ny[k] - wp.int32(1))
         iz = wp.clamp(iz, wp.int32(0), nz[k] - wp.int32(1))
-        cid = cell_offset[k] + ix + iy * nx[k] + iz * nx[k] * ny[k]
-        cell_ids[i] = cid
-        wp.atomic_add(counts, cid, wp.int32(1))
+        keys[i] = (virtual_offset[k] + ix + iy * nx[k]
+                   + iz * nx[k] * ny[k])
+        particles[i] = i
+
+
+    @wp.kernel
+    def _ml_count_occupied_levels(
+            unique_keys: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            level_cells: wp.array(dtype=wp.int32),
+            nlevels: wp.int32,
+            occupied: wp.array(dtype=wp.int32),
+    ):
+        i = wp.tid()
+        key = unique_keys[i]
+        for k in range(nlevels):
+            if (key >= virtual_offset[k]
+                    and key < virtual_offset[k] + level_cells[k]):
+                wp.atomic_add(occupied, k, wp.int32(1))
+
+
+    @wp.kernel
+    def _ml_mark_sparse_pairs(
+            keys: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            level_cells: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            nlevels: wp.int32,
+            flags: wp.array(dtype=wp.int32),
+    ):
+        i = wp.tid()
+        key = keys[i]
+        keep = wp.int32(0)
+        for k in range(nlevels):
+            if (key >= virtual_offset[k]
+                    and key < virtual_offset[k] + level_cells[k]):
+                keep = storage_mode[k]
+        flags[i] = keep
+
+
+    @wp.kernel
+    def _ml_compact_sparse_pairs(
+            keys: wp.array(dtype=wp.int32),
+            particles: wp.array(dtype=wp.int32),
+            flags: wp.array(dtype=wp.int32),
+            positions: wp.array(dtype=wp.int32),
+            sparse_keys: wp.array(dtype=wp.int32),
+            sparse_particles: wp.array(dtype=wp.uint32),
+    ):
+        i = wp.tid()
+        if flags[i] != wp.int32(0):
+            out = positions[i]
+            sparse_keys[out] = keys[i]
+            sparse_particles[out] = wp.uint32(particles[i])
+
+
+    @wp.kernel
+    def _ml_dense_cell_ids_f64(
+            x: wp.array(dtype=wp.float64),
+            y: wp.array(dtype=wp.float64),
+            z: wp.array(dtype=wp.float64),
+            level_of: wp.array(dtype=wp.int32),
+            origin_x: wp.array(dtype=wp.float64),
+            origin_y: wp.array(dtype=wp.float64),
+            origin_z: wp.array(dtype=wp.float64),
+            cell_size: wp.array(dtype=wp.float64),
+            nx: wp.array(dtype=wp.int32),
+            ny: wp.array(dtype=wp.int32),
+            nz: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            dim: wp.int32,
+            cell_ids: wp.array(dtype=wp.int32),
+            counts: wp.array(dtype=wp.int32),
+    ):
+        i = wp.tid()
+        k = level_of[i]
+        if storage_mode[k] == wp.int32(0):
+            cs = cell_size[k]
+            ix = wp.int32(wp.floor((x[i] - origin_x[k]) / cs))
+            iy = wp.int32(0)
+            iz = wp.int32(0)
+            if dim > 1:
+                iy = wp.int32(wp.floor((y[i] - origin_y[k]) / cs))
+            if dim > 2:
+                iz = wp.int32(wp.floor((z[i] - origin_z[k]) / cs))
+            ix = wp.clamp(ix, wp.int32(0), nx[k] - wp.int32(1))
+            iy = wp.clamp(iy, wp.int32(0), ny[k] - wp.int32(1))
+            iz = wp.clamp(iz, wp.int32(0), nz[k] - wp.int32(1))
+            cid = (dense_offset[k] + ix + iy * nx[k]
+                   + iz * nx[k] * ny[k])
+            cell_ids[i] = cid
+            wp.atomic_add(counts, cid, wp.int32(1))
+        else:
+            cell_ids[i] = wp.int32(-1)
+
+
+    @wp.kernel
+    def _ml_dense_cell_ids_f32(
+            x: wp.array(dtype=wp.float32),
+            y: wp.array(dtype=wp.float32),
+            z: wp.array(dtype=wp.float32),
+            level_of: wp.array(dtype=wp.int32),
+            origin_x: wp.array(dtype=wp.float32),
+            origin_y: wp.array(dtype=wp.float32),
+            origin_z: wp.array(dtype=wp.float32),
+            cell_size: wp.array(dtype=wp.float32),
+            nx: wp.array(dtype=wp.int32),
+            ny: wp.array(dtype=wp.int32),
+            nz: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            dim: wp.int32,
+            cell_ids: wp.array(dtype=wp.int32),
+            counts: wp.array(dtype=wp.int32),
+    ):
+        i = wp.tid()
+        k = level_of[i]
+        if storage_mode[k] == wp.int32(0):
+            cs = cell_size[k]
+            ix = wp.int32(wp.floor((x[i] - origin_x[k]) / cs))
+            iy = wp.int32(0)
+            iz = wp.int32(0)
+            if dim > 1:
+                iy = wp.int32(wp.floor((y[i] - origin_y[k]) / cs))
+            if dim > 2:
+                iz = wp.int32(wp.floor((z[i] - origin_z[k]) / cs))
+            ix = wp.clamp(ix, wp.int32(0), nx[k] - wp.int32(1))
+            iy = wp.clamp(iy, wp.int32(0), ny[k] - wp.int32(1))
+            iz = wp.clamp(iz, wp.int32(0), nz[k] - wp.int32(1))
+            cid = (dense_offset[k] + ix + iy * nx[k]
+                   + iz * nx[k] * ny[k])
+            cell_ids[i] = cid
+            wp.atomic_add(counts, cid, wp.int32(1))
+        else:
+            cell_ids[i] = wp.int32(-1)
+
+
+    @wp.kernel
+    def _ml_scatter_dense_particles(
+            cell_ids: wp.array(dtype=wp.int32),
+            cursor: wp.array(dtype=wp.int32),
+            cell_particles: wp.array(dtype=wp.uint32),
+    ):
+        i = wp.tid()
+        cid = cell_ids[i]
+        if cid >= wp.int32(0):
+            pos = wp.atomic_add(cursor, cid, wp.int32(1))
+            cell_particles[pos] = wp.uint32(i)
 
 
     @wp.func
@@ -239,7 +385,14 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            sparse_keys: wp.array(dtype=wp.int32),
+            sparse_starts: wp.array(dtype=wp.int32),
+            sparse_counts: wp.array(dtype=wp.int32),
+            sparse_particles: wp.array(dtype=wp.uint32),
+            sparse_cells: wp.int32,
             support: wp.array(dtype=wp.float64),
             nlevels: wp.int32,
             dim: wp.int32,
@@ -272,15 +425,34 @@ if wp is not None:
                         d_z[i], qr, origin_z[k], cs, nzk)
                     izlo = rz[0]
                     izhi = rz[1]
-                off = cell_offset[k]
+                dense_off = dense_offset[k]
+                virtual_off = virtual_offset[k]
                 for iz in range(izlo, izhi + 1):
                     for iy in range(iylo, iyhi + 1):
                         for ix in range(rx[0], rx[1] + 1):
-                            cid = off + ix + iy * nxk + iz * nxk * nyk
-                            start = cell_starts[cid]
-                            stop = start + cell_counts[cid]
+                            local = ix + iy * nxk + iz * nxk * nyk
+                            start = wp.int32(0)
+                            stop = wp.int32(0)
+                            sparse = storage_mode[k] != wp.int32(0)
+                            if sparse:
+                                key = virtual_off + local
+                                slot = wp.lower_bound(
+                                    sparse_keys, wp.int32(0), sparse_cells,
+                                    key)
+                                if (slot < sparse_cells
+                                        and sparse_keys[slot] == key):
+                                    start = sparse_starts[slot]
+                                    stop = start + sparse_counts[slot]
+                            else:
+                                cid = dense_off + local
+                                start = cell_starts[cid]
+                                stop = start + cell_counts[cid]
                             for pos in range(start, stop):
-                                j = wp.int32(cell_particles[pos])
+                                j = wp.int32(0)
+                                if sparse:
+                                    j = wp.int32(sparse_particles[pos])
+                                else:
+                                    j = wp.int32(cell_particles[pos])
                                 dx = d_x[i] - s_x[j]
                                 dy = wp.float64(0.0)
                                 dz = wp.float64(0.0)
@@ -317,7 +489,14 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            sparse_keys: wp.array(dtype=wp.int32),
+            sparse_starts: wp.array(dtype=wp.int32),
+            sparse_counts: wp.array(dtype=wp.int32),
+            sparse_particles: wp.array(dtype=wp.uint32),
+            sparse_cells: wp.int32,
             support: wp.array(dtype=wp.float64),
             nlevels: wp.int32,
             dim: wp.int32,
@@ -351,15 +530,34 @@ if wp is not None:
                         d_z[i], qr, origin_z[k], cs, nzk)
                     izlo = rz[0]
                     izhi = rz[1]
-                off = cell_offset[k]
+                dense_off = dense_offset[k]
+                virtual_off = virtual_offset[k]
                 for iz in range(izlo, izhi + 1):
                     for iy in range(iylo, iyhi + 1):
                         for ix in range(rx[0], rx[1] + 1):
-                            cid = off + ix + iy * nxk + iz * nxk * nyk
-                            start = cell_starts[cid]
-                            stop = start + cell_counts[cid]
+                            local = ix + iy * nxk + iz * nxk * nyk
+                            start = wp.int32(0)
+                            stop = wp.int32(0)
+                            sparse = storage_mode[k] != wp.int32(0)
+                            if sparse:
+                                key = virtual_off + local
+                                slot = wp.lower_bound(
+                                    sparse_keys, wp.int32(0), sparse_cells,
+                                    key)
+                                if (slot < sparse_cells
+                                        and sparse_keys[slot] == key):
+                                    start = sparse_starts[slot]
+                                    stop = start + sparse_counts[slot]
+                            else:
+                                cid = dense_off + local
+                                start = cell_starts[cid]
+                                stop = start + cell_counts[cid]
                             for pos in range(start, stop):
-                                j = wp.int32(cell_particles[pos])
+                                j = wp.int32(0)
+                                if sparse:
+                                    j = wp.int32(sparse_particles[pos])
+                                else:
+                                    j = wp.int32(cell_particles[pos])
                                 dx = d_x[i] - s_x[j]
                                 dy = wp.float64(0.0)
                                 dz = wp.float64(0.0)
@@ -395,7 +593,14 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            sparse_keys: wp.array(dtype=wp.int32),
+            sparse_starts: wp.array(dtype=wp.int32),
+            sparse_counts: wp.array(dtype=wp.int32),
+            sparse_particles: wp.array(dtype=wp.uint32),
+            sparse_cells: wp.int32,
             support: wp.array(dtype=wp.float32),
             nlevels: wp.int32,
             dim: wp.int32,
@@ -429,15 +634,34 @@ if wp is not None:
                         d_z[i], qr, origin_z[k], cs, nzk)
                     izlo = rz[0]
                     izhi = rz[1]
-                off = cell_offset[k]
+                dense_off = dense_offset[k]
+                virtual_off = virtual_offset[k]
                 for iz in range(izlo, izhi + 1):
                     for iy in range(iylo, iyhi + 1):
                         for ix in range(rx[0], rx[1] + 1):
-                            cid = off + ix + iy * nxk + iz * nxk * nyk
-                            start = cell_starts[cid]
-                            stop = start + cell_counts[cid]
+                            local = ix + iy * nxk + iz * nxk * nyk
+                            start = wp.int32(0)
+                            stop = wp.int32(0)
+                            sparse = storage_mode[k] != wp.int32(0)
+                            if sparse:
+                                key = virtual_off + local
+                                slot = wp.lower_bound(
+                                    sparse_keys, wp.int32(0), sparse_cells,
+                                    key)
+                                if (slot < sparse_cells
+                                        and sparse_keys[slot] == key):
+                                    start = sparse_starts[slot]
+                                    stop = start + sparse_counts[slot]
+                            else:
+                                cid = dense_off + local
+                                start = cell_starts[cid]
+                                stop = start + cell_counts[cid]
                             for pos in range(start, stop):
-                                j = wp.int32(cell_particles[pos])
+                                j = wp.int32(0)
+                                if sparse:
+                                    j = wp.int32(sparse_particles[pos])
+                                else:
+                                    j = wp.int32(cell_particles[pos])
                                 dx = d_x[i] - s_x[j]
                                 dy = wp.float32(0.0)
                                 dz = wp.float32(0.0)
@@ -474,7 +698,14 @@ if wp is not None:
             nx: wp.array(dtype=wp.int32),
             ny: wp.array(dtype=wp.int32),
             nz: wp.array(dtype=wp.int32),
-            cell_offset: wp.array(dtype=wp.int32),
+            dense_offset: wp.array(dtype=wp.int32),
+            storage_mode: wp.array(dtype=wp.int32),
+            virtual_offset: wp.array(dtype=wp.int32),
+            sparse_keys: wp.array(dtype=wp.int32),
+            sparse_starts: wp.array(dtype=wp.int32),
+            sparse_counts: wp.array(dtype=wp.int32),
+            sparse_particles: wp.array(dtype=wp.uint32),
+            sparse_cells: wp.int32,
             support: wp.array(dtype=wp.float32),
             nlevels: wp.int32,
             dim: wp.int32,
@@ -509,15 +740,34 @@ if wp is not None:
                         d_z[i], qr, origin_z[k], cs, nzk)
                     izlo = rz[0]
                     izhi = rz[1]
-                off = cell_offset[k]
+                dense_off = dense_offset[k]
+                virtual_off = virtual_offset[k]
                 for iz in range(izlo, izhi + 1):
                     for iy in range(iylo, iyhi + 1):
                         for ix in range(rx[0], rx[1] + 1):
-                            cid = off + ix + iy * nxk + iz * nxk * nyk
-                            start = cell_starts[cid]
-                            stop = start + cell_counts[cid]
+                            local = ix + iy * nxk + iz * nxk * nyk
+                            start = wp.int32(0)
+                            stop = wp.int32(0)
+                            sparse = storage_mode[k] != wp.int32(0)
+                            if sparse:
+                                key = virtual_off + local
+                                slot = wp.lower_bound(
+                                    sparse_keys, wp.int32(0), sparse_cells,
+                                    key)
+                                if (slot < sparse_cells
+                                        and sparse_keys[slot] == key):
+                                    start = sparse_starts[slot]
+                                    stop = start + sparse_counts[slot]
+                            else:
+                                cid = dense_off + local
+                                start = cell_starts[cid]
+                                stop = start + cell_counts[cid]
                             for pos in range(start, stop):
-                                j = wp.int32(cell_particles[pos])
+                                j = wp.int32(0)
+                                if sparse:
+                                    j = wp.int32(sparse_particles[pos])
+                                else:
+                                    j = wp.int32(cell_particles[pos])
                                 dx = d_x[i] - s_x[j]
                                 dy = wp.float32(0.0)
                                 dz = wp.float32(0.0)
@@ -538,8 +788,8 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
 
     Sources are binned into discrete smoothing-length levels (see
     ``assign_particle_levels``). Each populated level gets its own padded
-    origin, cell size (its conservative support bound) and dimensions; all
-    levels are flattened into one global cell space via ``cell_offset``.
+    origin, cell size (its conservative support bound) and dimensions. Compact
+    levels use flattened dense grids while sparse levels use sorted cell keys.
     Neighbor traversal loops over levels, converting each level's query radius
     ``max(radius_scale*h_i, support[k])`` into a variable cell-index range (not
     a fixed 3x3x3 stencil), then applies the exact symmetric cutoff. The
@@ -554,7 +804,8 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
 
     def __init__(self, dim, particles, radius_scale=2.0, h_ref=None,
                  level_ratio=2.0, nlevels=1, ghost_layers=1, domain=None,
-                 cache=True, sort_gids=False, backend='warp', device=None):
+                 cache=True, sort_gids=False, backend='warp', device=None,
+                 sparse_cell_ratio=4.0):
         if h_ref is None:
             raise ValueError("MultilevelGridWarpNNPS requires an h_ref")
         if nlevels < 1:
@@ -567,6 +818,10 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
         self.h_ref = h_ref
         self.level_ratio = level_ratio
         self.nlevels = nlevels
+        if sparse_cell_ratio < 1.0:
+            raise ValueError("sparse_cell_ratio must be >= 1; got %r"
+                             % (sparse_cell_ratio,))
+        self.sparse_cell_ratio = float(sparse_cell_ratio)
         self._ml = {}
         super(MultilevelGridWarpNNPS, self).__init__(
             dim=dim, particles=particles, radius_scale=radius_scale,
@@ -585,14 +840,12 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
     def _ml_kernels_for(self, gpu):
         if gpu.x.dtype == np.float32:
             return (
-                _multilevel_cell_ids_f32,
                 _multilevel_neighbor_lengths_f32,
                 _multilevel_neighbor_fill_f32,
                 np.float32(self.radius_scale), wp.float32, np.float32,
                 _ml_assign_reduce_f32,
             )
         return (
-            _multilevel_cell_ids_f64,
             _multilevel_neighbor_lengths_f64,
             _multilevel_neighbor_fill_f64,
             np.float64(self.radius_scale), wp.float64, np.float64,
@@ -609,7 +862,7 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
         dim = self.dim
         nlevels = self.nlevels
         dev = self.device
-        cell_ids_k, _, _, _, wpf, npf, assign_k = self._ml_kernels_for(gpu)
+        _, _, _, wpf, npf, assign_k = self._ml_kernels_for(gpu)
 
         # Level edges in the device float precision; an fp32 h sitting exactly
         # on an edge then bins like the edge instead of tripping the guard.
@@ -679,6 +932,11 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
                 nz[k] = max(1, int(np.ceil((float(zmx[k]) + cs - oz[k]) / cs)))
 
         sizes = nx.astype(np.int64) * ny.astype(np.int64) * nz.astype(np.int64)
+        if int(sizes.sum()) > np.iinfo(np.int32).max:
+            raise ValueError(
+                "multilevel logical cell keys exceed the int32 prototype "
+                "limit; split the domain or adopt 64-bit run-length keys"
+            )
         cell_offset = np.zeros(nlevels, dtype=np.int32)
         if nlevels > 1:
             cell_offset[1:] = np.cumsum(sizes)[:-1].astype(np.int32)
@@ -693,7 +951,6 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
             'nx': wp.array(nx, dtype=wp.int32, device=dev),
             'ny': wp.array(ny, dtype=wp.int32, device=dev),
             'nz': wp.array(nz, dtype=wp.int32, device=dev),
-            'cell_offset': wp.array(cell_offset, dtype=wp.int32, device=dev),
             'support': wp.array(support.astype(npf), dtype=wpf, device=dev),
             'total_cells': total_cells,
             'nsrc': nsrc,
@@ -705,37 +962,237 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
             'nx_host': nx, 'ny_host': ny, 'nz_host': nz,
         }
 
-        ncells_alloc = total_cells if total_cells > 0 else 1
-        nsrc_alloc = nsrc if nsrc > 0 else 1
-        counts_g = wp.zeros(ncells_alloc, dtype=wp.int32, device=dev)
-        starts = wp.zeros(ncells_alloc, dtype=wp.int32, device=dev)
-        cursor = wp.zeros(ncells_alloc, dtype=wp.int32, device=dev)
-        cell_particles = wp.zeros(nsrc_alloc, dtype=wp.uint32, device=dev)
-        if nsrc > 0 and total_cells > 0:
-            cell_ids = wp.zeros(nsrc, dtype=wp.int32, device=dev)
+        # Build the sorted sparse-cell oracle for every occupied level. It
+        # supplies exact occupied-cell counts for the hybrid decision without
+        # reading particle keys or coordinates back to the host.
+        self._build_sparse_oracle(
+            ml, gpu, counts, sizes.astype(np.int32), cell_offset
+        )
+
+        self._build_hybrid_storage(ml, gpu, counts, sizes.astype(np.int32))
+
+        self._ml[src_index] = ml
+        return ml
+
+    def _build_sparse_oracle(self, ml, gpu, level_counts, level_cells,
+                             virtual_offset):
+        """Build sorted occupied-cell keys and choose storage per level.
+
+        Device radix-sort plus run-length encoding forms the oracle. Only the
+        per-level occupied counts are read back; particle keys and indices stay
+        on the device. ``storage_mode`` is 0 for dense and 1 for sparse.
+        """
+        nsrc = ml['nsrc']
+        nlevels = self.nlevels
+        dev = self.device
+        nalloc = max(1, nsrc)
+        keys = wp.zeros(max(2, 2 * nsrc), dtype=wp.int32, device=dev)
+        particles = wp.zeros(max(2, 2 * nsrc), dtype=wp.int32, device=dev)
+        virtual_offset_dev = wp.array(
+            virtual_offset, dtype=wp.int32, device=dev
+        )
+        level_cells_dev = wp.array(level_cells, dtype=wp.int32, device=dev)
+        if nsrc > 0:
+            key_kernel = (_ml_virtual_cell_keys_f32
+                          if gpu.x.dtype == np.float32
+                          else _ml_virtual_cell_keys_f64)
             wp.launch(
-                cell_ids_k,
-                dim=nsrc,
+                key_kernel, dim=nsrc,
                 inputs=[
                     gpu.x.dev, gpu.y.dev, gpu.z.dev, ml['level_of'],
                     ml['origin_x'], ml['origin_y'], ml['origin_z'],
                     ml['cell_size'], ml['nx'], ml['ny'], ml['nz'],
-                    ml['cell_offset'], np.int32(dim), cell_ids, counts_g,
+                    virtual_offset_dev, np.int32(self.dim), keys, particles,
                 ],
                 device=dev,
             )
-            wp.utils.array_scan(counts_g, starts, inclusive=False)
-            wp.launch(_copy_i32, dim=total_cells, inputs=[starts, cursor],
-                      device=dev)
-            wp.launch(_scatter_cell_particles, dim=nsrc,
-                      inputs=[cell_ids, cursor, cell_particles], device=dev)
-            wp.synchronize_device(dev)
-        ml['counts'] = counts_g
-        ml['starts'] = starts
-        ml['cell_particles'] = cell_particles
+            wp.utils.radix_sort_pairs(keys, particles, nsrc)
 
-        self._ml[src_index] = ml
-        return ml
+        unique_keys = wp.zeros(nalloc, dtype=wp.int32, device=dev)
+        unique_counts = wp.zeros(nalloc, dtype=wp.int32, device=dev)
+        occupied_total = (
+            wp.utils.runlength_encode(
+                keys[:nsrc], unique_keys, unique_counts
+            ) if nsrc > 0 else 0
+        )
+        occupied_l = wp.zeros(nlevels, dtype=wp.int32, device=dev)
+        if occupied_total > 0:
+            wp.launch(
+                _ml_count_occupied_levels, dim=occupied_total,
+                inputs=[
+                    unique_keys, virtual_offset_dev, level_cells_dev,
+                    np.int32(nlevels), occupied_l,
+                ],
+                device=dev,
+            )
+            wp.synchronize_device(dev)
+        occupied = occupied_l.numpy()
+        storage_mode = np.zeros(nlevels, dtype=np.int32)
+        for k in range(nlevels):
+            if occupied[k] > 0 and (
+                    float(level_cells[k]) / float(occupied[k])
+                    > self.sparse_cell_ratio):
+                storage_mode[k] = 1
+
+        ml.update({
+            'virtual_offset': virtual_offset_dev,
+            'virtual_offset_host': virtual_offset,
+            'level_cells': level_cells_dev,
+            'level_cells_host': level_cells,
+            'occupied_host': occupied,
+            'storage_mode': wp.array(
+                storage_mode, dtype=wp.int32, device=dev
+            ),
+            'storage_mode_host': storage_mode,
+            'sorted_keys': keys,
+            'oracle_keys': unique_keys,
+            'oracle_counts': unique_counts,
+            'oracle_particles': particles,
+        })
+
+    def _build_hybrid_storage(self, ml, gpu, level_counts, level_cells):
+        """Materialize dense compact grids and sparse sorted runs per level."""
+        dev = self.device
+        nsrc = ml['nsrc']
+        nlevels = self.nlevels
+        mode = ml['storage_mode_host']
+
+        # Stable compaction of the already sorted all-particle key stream keeps
+        # only particles belonging to sparse-selected levels.
+        nsparse = int(level_counts[mode == 1].sum())
+        sparse_flags = wp.zeros(max(1, nsrc), dtype=wp.int32, device=dev)
+        sparse_pos = wp.zeros(max(1, nsrc), dtype=wp.int32, device=dev)
+        sparse_pair_keys = wp.zeros(max(1, nsparse), dtype=wp.int32,
+                                    device=dev)
+        sparse_particles = wp.zeros(max(1, nsparse), dtype=wp.uint32,
+                                    device=dev)
+        # ``oracle_particles`` is the value array after radix sort; the sorted
+        # keys remain in the first nsrc entries of a private array. Preserve it
+        # explicitly in the oracle record to avoid confusing keys and runs.
+        sorted_keys = ml['sorted_keys']
+        sorted_particles = ml['oracle_particles']
+        if nsrc > 0:
+            wp.launch(
+                _ml_mark_sparse_pairs, dim=nsrc,
+                inputs=[
+                    sorted_keys, ml['virtual_offset'], ml['level_cells'],
+                    ml['storage_mode'], np.int32(nlevels), sparse_flags,
+                ],
+                device=dev,
+            )
+            wp.utils.array_scan(sparse_flags, sparse_pos, inclusive=False)
+            if nsparse > 0:
+                wp.launch(
+                    _ml_compact_sparse_pairs, dim=nsrc,
+                    inputs=[
+                        sorted_keys, sorted_particles, sparse_flags, sparse_pos,
+                        sparse_pair_keys, sparse_particles,
+                    ],
+                    device=dev,
+                )
+
+        sparse_keys = wp.zeros(max(1, nsparse), dtype=wp.int32, device=dev)
+        sparse_counts = wp.zeros(max(1, nsparse), dtype=wp.int32, device=dev)
+        sparse_cells = (
+            wp.utils.runlength_encode(
+                sparse_pair_keys[:nsparse], sparse_keys, sparse_counts
+            ) if nsparse > 0 else 0
+        )
+        sparse_starts = wp.zeros(max(1, sparse_cells), dtype=wp.int32,
+                                 device=dev)
+        if sparse_cells > 0:
+            wp.utils.array_scan(
+                sparse_counts[:sparse_cells], sparse_starts, inclusive=False
+            )
+            if sparse_cells < nsparse:
+                compact_keys = wp.zeros(
+                    sparse_cells, dtype=wp.int32, device=dev
+                )
+                compact_counts = wp.zeros(
+                    sparse_cells, dtype=wp.int32, device=dev
+                )
+                wp.launch(
+                    _copy_i32, dim=sparse_cells,
+                    inputs=[sparse_keys, compact_keys], device=dev,
+                )
+                wp.launch(
+                    _copy_i32, dim=sparse_cells,
+                    inputs=[sparse_counts, compact_counts], device=dev,
+                )
+                sparse_keys = compact_keys
+                sparse_counts = compact_counts
+
+        # Dense-selected levels receive compact offsets; sparse levels allocate
+        # zero dense cells and are addressed by their virtual sorted key.
+        dense_offset = np.zeros(nlevels, dtype=np.int32)
+        running = 0
+        for k in range(nlevels):
+            dense_offset[k] = running
+            if mode[k] == 0:
+                running += int(level_cells[k])
+        dense_cells = running
+        ndense = nsrc - nsparse
+        dense_counts = wp.zeros(max(1, dense_cells), dtype=wp.int32,
+                                device=dev)
+        dense_starts = wp.zeros(max(1, dense_cells), dtype=wp.int32,
+                                device=dev)
+        dense_cursor = wp.zeros(max(1, dense_cells), dtype=wp.int32,
+                                device=dev)
+        dense_particles = wp.zeros(max(1, ndense), dtype=wp.uint32, device=dev)
+        if nsrc > 0 and dense_cells > 0:
+            cell_ids = wp.zeros(nsrc, dtype=wp.int32, device=dev)
+            dense_id_kernel = (_ml_dense_cell_ids_f32
+                               if gpu.x.dtype == np.float32
+                               else _ml_dense_cell_ids_f64)
+            dense_offset_dev = wp.array(
+                dense_offset, dtype=wp.int32, device=dev
+            )
+            wp.launch(
+                dense_id_kernel, dim=nsrc,
+                inputs=[
+                    gpu.x.dev, gpu.y.dev, gpu.z.dev, ml['level_of'],
+                    ml['origin_x'], ml['origin_y'], ml['origin_z'],
+                    ml['cell_size'], ml['nx'], ml['ny'], ml['nz'],
+                    dense_offset_dev, ml['storage_mode'], np.int32(self.dim),
+                    cell_ids, dense_counts,
+                ],
+                device=dev,
+            )
+            wp.utils.array_scan(dense_counts, dense_starts, inclusive=False)
+            wp.launch(
+                _copy_i32, dim=dense_cells,
+                inputs=[dense_starts, dense_cursor], device=dev,
+            )
+            wp.launch(
+                _ml_scatter_dense_particles, dim=nsrc,
+                inputs=[cell_ids, dense_cursor, dense_particles], device=dev,
+            )
+        else:
+            dense_offset_dev = wp.array(
+                dense_offset, dtype=wp.int32, device=dev
+            )
+        wp.synchronize_device(dev)
+        ml.update({
+            'counts': dense_counts,
+            'starts': dense_starts,
+            'cell_particles': dense_particles,
+            'dense_offset': dense_offset_dev,
+            'dense_offset_host': dense_offset,
+            'dense_cells': dense_cells,
+            'sparse_keys': sparse_keys,
+            'sparse_counts': sparse_counts,
+            'sparse_starts': sparse_starts,
+            'sparse_particles': sparse_particles,
+            'sparse_cells': int(sparse_cells),
+            'sparse_particle_count': nsparse,
+        })
+        # The all-level sort/RLE arrays are build scratch. Drop their Python
+        # references so the persistent hybrid representation retains only the
+        # compact dense particles and sparse-selected runs.
+        for name in (
+                'sorted_keys', 'oracle_keys', 'oracle_counts',
+                'oracle_particles'):
+            ml.pop(name, None)
 
     def build_neighbor_cache_gpu(self, src_index, dst_index):
         """Device-resident multilevel neighbor cache (test/diagnostic oracle).
@@ -750,7 +1207,7 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
         dst = self.particles[dst_index].gpu
         dev = self.device
         ndst = dst.get_number_of_particles()
-        _, lengths_k, fill_k, radius_scale, wpf, npf, _ = \
+        lengths_k, fill_k, radius_scale, _, _, _ = \
             self._ml_kernels_for(src)
 
         lengths = wp.zeros(ndst if ndst > 0 else 1, dtype=wp.int32, device=dev)
@@ -760,7 +1217,10 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
             dst.x.dev, dst.y.dev, dst.z.dev, dst.h.dev,
             ml['starts'], ml['counts'], ml['cell_particles'],
             ml['origin_x'], ml['origin_y'], ml['origin_z'], ml['cell_size'],
-            ml['nx'], ml['ny'], ml['nz'], ml['cell_offset'], ml['support'],
+            ml['nx'], ml['ny'], ml['nz'], ml['dense_offset'],
+            ml['storage_mode'], ml['virtual_offset'], ml['sparse_keys'],
+            ml['sparse_starts'], ml['sparse_counts'], ml['sparse_particles'],
+            np.int32(ml['sparse_cells']), ml['support'],
             np.int32(self.nlevels), np.int32(self.dim), radius_scale,
         ]
         active = ndst > 0 and ml['total_cells'] > 0
@@ -808,6 +1268,56 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
             'origin_x': ml['ox_host'], 'origin_y': ml['oy_host'],
             'origin_z': ml['oz_host'], 'cell_size': ml['cs_host'],
             'nx': ml['nx_host'], 'ny': ml['ny_host'], 'nz': ml['nz_host'],
+            'occupied': ml['occupied_host'],
+            'storage_mode': ml['storage_mode_host'],
+        }
+
+    def sparse_oracle_info(self, src_index):
+        """Host diagnostic for the device-built sorted-cell oracle."""
+        ml = self._build_multilevel(src_index)
+        nruns = ml['sparse_cells']
+        return {
+            'keys': ml['sparse_keys'].numpy()[:nruns],
+            'counts': ml['sparse_counts'].numpy()[:nruns],
+            'sorted_particles': ml['sparse_particles'].numpy()[
+                :ml['sparse_particle_count']],
+            'occupied': ml['occupied_host'].copy(),
+            'storage_mode': ml['storage_mode_host'].copy(),
+            'level_cells': ml['level_cells_host'].copy(),
+        }
+
+    def storage_diagnostics(self, src_index):
+        """Exact/projected persistent bytes for dense, sparse, and hybrid.
+
+        The keyed oracle uses int32 logical cell keys because the existing
+        flattened-cell contract is int32. Counts, starts, particle indices, and
+        level assignments are also int32. Transient radix-sort scratch is
+        intentionally reported separately by the benchmark, not hidden in
+        these persistent representation totals.
+        """
+        ml = self._build_multilevel(src_index)
+        n = ml['nsrc']
+        cells = ml['level_cells_host'].astype(np.int64)
+        occupied = ml['occupied_host'].astype(np.int64)
+        mode = ml['storage_mode_host']
+        dense_cells = int(cells.sum())
+        occupied_cells = int(occupied.sum())
+        hybrid_dense = int(cells[mode == 0].sum())
+        hybrid_sparse = int(occupied[mode == 1].sum())
+        metadata = 12 * 4 * self.nlevels
+        common = 8 * n + metadata
+        return {
+            'particles': n,
+            'dense_cells': dense_cells,
+            'occupied_cells': occupied_cells,
+            'hybrid_dense_cells': hybrid_dense,
+            'hybrid_sparse_cells': hybrid_sparse,
+            'storage_mode': mode.copy(),
+            'dense_persistent_bytes': common + 8 * dense_cells,
+            'sparse_persistent_bytes': common + 12 * occupied_cells,
+            'hybrid_projected_persistent_bytes': (
+                common + 8 * hybrid_dense + 12 * hybrid_sparse
+            ),
         }
 
     def candidate_pairs(self, src_index, dst_index):
@@ -825,14 +1335,20 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
         d_x, d_y, d_z, d_h = (dst.x.get(), dst.y.get(), dst.z.get(),
                               dst.h.get())
         counts = ml['counts'].numpy()
+        sparse_keys = ml['sparse_keys'].numpy()[:ml['sparse_cells']]
+        sparse_counts = ml['sparse_counts'].numpy()[:ml['sparse_cells']]
+        sparse_lookup = {
+            int(key): int(value)
+            for key, value in zip(sparse_keys, sparse_counts)
+        }
+        mode = ml['storage_mode_host']
         ox, oy, oz = ml['ox_host'], ml['oy_host'], ml['oz_host']
         cs, sup = ml['cs_host'], ml['support_host']
         nx, ny, nz = ml['nx_host'], ml['ny_host'], ml['nz_host']
         sizes = (nx.astype(np.int64) * ny.astype(np.int64)
                  * nz.astype(np.int64))
-        offset = np.zeros(nlevels, dtype=np.int64)
-        if nlevels > 1:
-            offset[1:] = np.cumsum(sizes)[:-1]
+        virtual_offset = ml['virtual_offset_host'].astype(np.int64)
+        dense_offset = ml['dense_offset_host'].astype(np.int64)
 
         def _rng(c, o, csk, n):
             lo = int(np.floor((c - qr - o) / csk)) - 1
@@ -853,6 +1369,15 @@ class MultilevelGridWarpNNPS(UniformGridWarpNNPS):
                               _rng(float(d_z[i]), float(oz[k]), csk, nz[k]))
                 for iz in range(izlo, izhi + 1):
                     for iy in range(iylo, iyhi + 1):
-                        base = offset[k] + iz * nx[k] * ny[k] + iy * nx[k]
-                        total += int(counts[base + ixlo: base + ixhi + 1].sum())
+                        local = iz * nx[k] * ny[k] + iy * nx[k]
+                        if mode[k] == 0:
+                            base = dense_offset[k] + local
+                            total += int(
+                                counts[base + ixlo:base + ixhi + 1].sum()
+                            )
+                        else:
+                            for ix in range(ixlo, ixhi + 1):
+                                total += sparse_lookup.get(
+                                    int(virtual_offset[k] + local + ix), 0
+                                )
         return total

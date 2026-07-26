@@ -310,8 +310,8 @@ def generate_group_source(equations, dtype, func_name='_warp_group_kernel',
         L("        lengths: wp.array(dtype=wp.int32),")
         L("        neighbors: wp.array(dtype=wp.uint32),")
     elif neighbor_mode == 'multilevel':
-        # One flattened global cell list across all levels, plus per-level
-        # (length nlevels) metadata arrays for the variable-stencil walk.
+        # Compact dense cell lists plus sorted sparse cell runs, with per-level
+        # (length nlevels) routing metadata for the variable-stencil walk.
         L("        cell_starts: wp.array(dtype=wp.int32),")
         L("        cell_counts: wp.array(dtype=wp.int32),")
         L("        cell_particles: wp.array(dtype=wp.uint32),")
@@ -322,7 +322,14 @@ def generate_group_source(equations, dtype, func_name='_warp_group_kernel',
         L("        lnx: wp.array(dtype=wp.int32),")
         L("        lny: wp.array(dtype=wp.int32),")
         L("        lnz: wp.array(dtype=wp.int32),")
-        L("        cell_offset: wp.array(dtype=wp.int32),")
+        L("        dense_offset: wp.array(dtype=wp.int32),")
+        L("        storage_mode: wp.array(dtype=wp.int32),")
+        L("        virtual_offset: wp.array(dtype=wp.int32),")
+        L("        sparse_keys: wp.array(dtype=wp.int32),")
+        L("        sparse_starts: wp.array(dtype=wp.int32),")
+        L("        sparse_counts: wp.array(dtype=wp.int32),")
+        L("        sparse_particles: wp.array(dtype=wp.uint32),")
+        L("        sparse_cells: wp.int32,")
         L("        support: wp.array(dtype=%s)," % type_token)
         L("        nlevels: wp.int32,")
         L("        radius_scale: %s," % type_token)
@@ -484,15 +491,34 @@ def generate_group_source(equations, dtype, func_name='_warp_group_kernel',
           " wp.int32(1))")
         L("                izhi = wp.clamp(izhi, wp.int32(0), nzk -"
           " wp.int32(1))")
-        L("            off = cell_offset[lk]")
+        L("            dense_off = dense_offset[lk]")
+        L("            virtual_off = virtual_offset[lk]")
         L("            for iz in range(izlo, izhi + 1):")
         L("                for iy in range(iylo, iyhi + 1):")
         L("                    for ix in range(ixlo, ixhi + 1):")
-        L("                        cid = off + ix + iy * nxk + iz * nxk * nyk")
-        L("                        c_start_ = cell_starts[cid]")
-        L("                        c_stop_ = c_start_ + cell_counts[cid]")
+        L("                        local = ix + iy * nxk + iz * nxk * nyk")
+        L("                        c_start_ = wp.int32(0)")
+        L("                        c_stop_ = wp.int32(0)")
+        L("                        sparse_ = storage_mode[lk] != wp.int32(0)")
+        L("                        if sparse_:")
+        L("                            key_ = virtual_off + local")
+        L("                            slot_ = wp.lower_bound(sparse_keys,"
+          " wp.int32(0), sparse_cells, key_)")
+        L("                            if slot_ < sparse_cells and"
+          " sparse_keys[slot_] == key_:")
+        L("                                c_start_ = sparse_starts[slot_]")
+        L("                                c_stop_ = c_start_ +"
+          " sparse_counts[slot_]")
+        L("                        else:")
+        L("                            cid = dense_off + local")
+        L("                            c_start_ = cell_starts[cid]")
+        L("                            c_stop_ = c_start_ + cell_counts[cid]")
         L("                        for pos in range(c_start_, c_stop_):")
-        L("                            j = wp.int32(cell_particles[pos])")
+        L("                            j = wp.int32(0)")
+        L("                            if sparse_:")
+        L("                                j = wp.int32(sparse_particles[pos])")
+        L("                            else:")
+        L("                                j = wp.int32(cell_particles[pos])")
         pre = _emit_geometry(requires, type_token, func_suffix, phase='pre')
         for line in pre:
             L(_reindent(line, 20))
