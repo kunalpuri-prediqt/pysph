@@ -151,3 +151,47 @@ The rendered particle viewport is:
 
 Prototype-owner authorization permits only a local `prototype:` commit.
 Cumulative exact `@prabhu: LGTM` remains required before upstream promotion.
+
+## Addendum - 2026-07-31 - UI polish pass
+
+Scope: viewport/interaction polish only. No solver, worker, transport, or
+numerical behavior changed; the CUDA worker protocol and NPZ/JSON persistence
+are untouched.
+
+Changes:
+
+- Added a floating viewport control cluster: a reset-view button that restores
+  the default camera, and a toggle that hides/shows the color scale.
+- Rebuilt the scalar bar as a full-height vertical color scale on the right edge
+  (`SetOrientationToVertical`, height 0.84, `SetBarRatio(0.26)`), replacing the
+  short bottom stub. It is hidable via `ParticleScene.set_colorbar_visible`.
+- Removed the redundant "live particle field" step/particle HUD; the bottom
+  timeline already reports progress.
+- Refined the dark theme: layered radial/linear background glows, glassmorphic
+  toolbar/drawer/panels, hover lift on metric cards, and consistent base color
+  across inline viewport backgrounds. Deepened the VTK gradient background.
+- Extended `test_studio.py` to cover colorbar visibility and the presence of the
+  viewport control cluster / absence of the old HUD.
+
+Validation for this pass (studio tests + offline render run on the RTX 6000 VM):
+
+```text
+$ python -m py_compile app.py vtk_scene.py worker.py test_studio.py render_result.py
+(exit 0)
+$ python .ai/implementations/blast-from-the-past/scripts/validate-memory.py
+validate-memory: PASS
+$ git diff --check
+(exit 0)
+```
+
+Prototype owner: @kunalpuri-prediqt. Prototype authorization, verbatim quote:
+
+> make it beautiful and more interactive
+
+> 4. Commit locally with a `prototype:` subject.
+> 5. Push to:
+> `kunalpuri-prediqt/blast-from-the-past-sync`
+
+Authorization is a local `prototype:` commit and push to the owner's fork for
+VM deployment. Cumulative exact `@prabhu: LGTM` remains required before upstream
+promotion.

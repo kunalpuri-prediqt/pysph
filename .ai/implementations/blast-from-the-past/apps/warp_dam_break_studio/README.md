@@ -32,7 +32,11 @@ browser-local serialization limits for Gaussian particle actors. A JPEG frame
 is also carried in application state as a visible fallback, and the latest NPZ
 is restored when the service restarts. The workspace has a collapsible control
 drawer, a dedicated full-height 3D center panel, and a collapsible run-details
-panel on the right. Pause takes
+panel on the right. The viewport carries a floating control cluster with a
+reset-view button that restores the default camera and a toggle that hides or
+shows the color scale; when shown, the scale is a full-height vertical bar on
+the right edge. The redundant live step/particle overlay was removed because the
+bottom timeline already reports progress. Pause takes
 effect at the next complete solver-step boundary. The 3D camera remains
 interactive while paused, and the timeline can inspect buffered frames without
 altering GPU solver state.

@@ -116,6 +116,7 @@ class WarpDamBreakStudio:
             "particle_scale": 0.55,
             "wall_opacity": 0.20,
             "obstacle_visible": True,
+            "colorbar_visible": True,
             "right_panel_open": True,
             "frame_index": 0,
             "frame_max": 0,
@@ -150,6 +151,7 @@ class WarpDamBreakStudio:
         self.state.change("wall_opacity")(self._on_wall_opacity)
         self.state.change("obstacle_visible")(self._on_obstacle_visible)
         self.state.change("with_obstacle")(self._on_obstacle_visible)
+        self.state.change("colorbar_visible")(self._on_colorbar_visible)
         self.state.change("frame_index")(self._on_frame_index)
 
     def _config(self):
@@ -244,6 +246,10 @@ class WarpDamBreakStudio:
 
     def _on_obstacle_visible(self, obstacle_visible, **_):
         self.scene.set_obstacle_visible(obstacle_visible)
+        self._refresh_view()
+
+    def _on_colorbar_visible(self, colorbar_visible, **_):
+        self.scene.set_colorbar_visible(colorbar_visible)
         self._refresh_view()
 
     def _on_frame_index(self, frame_index, **_):
@@ -360,56 +366,72 @@ class WarpDamBreakStudio:
     def _build_ui(self):
         css = """
         :root {
-          --studio-bg: #07101f;
-          --studio-panel: rgba(12, 24, 44, .92);
-          --studio-line: rgba(140, 180, 230, .14);
-          --studio-cyan: #42d8f5;
-          --studio-orange: #ff7345;
+          --studio-bg: #060a15;
+          --studio-panel: rgba(14, 24, 46, .90);
+          --studio-line: rgba(126, 174, 232, .16);
+          --studio-cyan: #38e1e0;
+          --studio-orange: #ff7a5c;
+          --studio-violet: #8b7bffcc;
         }
         html, body, #app { background: var(--studio-bg); overflow: hidden; }
         .studio-shell { background:
-          radial-gradient(circle at 70% 0%, rgba(28, 92, 155, .20), transparent 38%),
-          #07101f; }
+          radial-gradient(circle at 78% -8%, rgba(56, 197, 214, .20), transparent 44%),
+          radial-gradient(circle at 4% 112%, rgba(126, 108, 224, .18), transparent 48%),
+          linear-gradient(160deg, #070c1a 0%, #060a15 60%, #050811 100%); }
         .studio-toolbar {
-          backdrop-filter: blur(18px);
+          backdrop-filter: blur(20px);
           border-bottom: 1px solid var(--studio-line) !important;
-          background: rgba(7, 16, 31, .82) !important;
+          background: linear-gradient(180deg, rgba(11, 21, 40, .90),
+            rgba(7, 13, 27, .78)) !important;
         }
         .studio-drawer {
-          background: var(--studio-panel) !important;
+          background: linear-gradient(185deg, rgba(14, 26, 49, .94),
+            rgba(9, 17, 34, .94)) !important;
           border-right: 1px solid var(--studio-line) !important;
         }
-        .eyebrow { color: #70dff5; letter-spacing: .16em; font-size: .68rem;
+        .eyebrow { color: #6fe6ea; letter-spacing: .18em; font-size: .68rem;
           text-transform: uppercase; font-weight: 700; }
         .metric { border: 1px solid var(--studio-line); background:
-          linear-gradient(145deg, rgba(25, 48, 78, .60), rgba(10, 21, 39, .72));
-          border-radius: 14px; padding: 10px 12px; min-height: 68px; }
-        .metric-label { color: #8ca4c2; font-size: .68rem; text-transform:
+          linear-gradient(145deg, rgba(30, 56, 92, .55), rgba(11, 22, 42, .70));
+          border-radius: 14px; padding: 10px 12px; min-height: 68px;
+          transition: transform .18s ease, border-color .18s ease,
+            box-shadow .18s ease; }
+        .metric:hover { transform: translateY(-2px);
+          border-color: rgba(56, 225, 224, .38);
+          box-shadow: 0 10px 26px rgba(4, 10, 22, .45),
+            0 0 0 1px rgba(56, 225, 224, .10) inset; }
+        .metric-label { color: #90a8c8; font-size: .68rem; text-transform:
           uppercase; letter-spacing: .08em; }
         .metric-value { color: #f4f8ff; font-size: 1.15rem; font-weight: 650; }
         .studio-main { height: 100vh !important; max-height: 100vh !important;
-          overflow: hidden; background: #07101f; }
+          overflow: hidden; background: var(--studio-bg); }
         .studio-workspace { position: relative; display: grid;
           grid-template-columns: minmax(0, 1fr) auto; width: 100%; height:
           calc(100vh - 64px); min-height: 420px; overflow: hidden; }
         .viewport-wrap { position: relative; width: 100%; height: 100%;
-          min-width: 0; min-height: 0; overflow: hidden; background: #07101f; }
+          min-width: 0; min-height: 0; overflow: hidden; background: var(--studio-bg); }
         .viewport-fallback { position: absolute; inset: 0; width: 100%;
           height: 100%; object-fit: contain; z-index: 2; pointer-events: none;
-          background: #07101f; }
+          background: var(--studio-bg); }
         .viewport-remote { position: absolute !important; inset: 0; width: 100%;
           height: 100%; z-index: 1; background: transparent !important; }
-        .viewport-hud { position: absolute; top: 18px; left: 18px; z-index: 3;
-          background: rgba(7, 16, 31, .72); border: 1px solid var(--studio-line);
-          backdrop-filter: blur(14px); border-radius: 16px; padding: 12px 15px;
-          pointer-events: none; }
+        .viewport-controls { position: absolute; top: 18px; right: 18px;
+          z-index: 5; display: flex; gap: 6px; padding: 5px;
+          background: rgba(10, 19, 37, .62); border: 1px solid var(--studio-line);
+          backdrop-filter: blur(16px); border-radius: 14px;
+          box-shadow: 0 8px 24px rgba(3, 8, 18, .40); }
+        .viewport-btn { color: #bfe4f2 !important;
+          transition: color .16s ease, background-color .16s ease; }
+        .viewport-btn:hover { color: var(--studio-cyan) !important;
+          background: rgba(56, 225, 224, .12) !important; }
         .timeline { position: absolute; left: 24px; right: 24px; bottom: 18px;
-          z-index: 4; background: rgba(7, 16, 31, .84);
-          border: 1px solid var(--studio-line); backdrop-filter: blur(14px);
-          border-radius: 16px; padding: 4px 18px 0; }
+          z-index: 4; background: rgba(9, 17, 34, .82);
+          border: 1px solid var(--studio-line); backdrop-filter: blur(16px);
+          border-radius: 16px; padding: 4px 18px 0;
+          box-shadow: 0 10px 30px rgba(3, 8, 18, .38); }
         .details-panel { width: 292px; height: 100%; overflow-y: auto;
           padding: 18px; background: var(--studio-panel); border-left: 1px solid
-          var(--studio-line); box-shadow: -16px 0 36px rgba(0, 0, 0, .18); }
+          var(--studio-line); box-shadow: -16px 0 36px rgba(0, 0, 0, .22); }
         .details-grid { display: grid; gap: 10px; }
         @media (max-width: 1050px) {
           .details-panel { position: absolute; top: 0; right: 0; z-index: 8; }
@@ -425,7 +447,7 @@ class WarpDamBreakStudio:
             layout.content["classes"] = "studio-main"
             layout.content["style"] = (
                 "height:100vh;max-height:100vh;overflow:hidden;"
-                "background:#07101f;"
+                "background:#060a15;"
             )
             layout.drawer["width"] = 368
             layout.title.set_text("PySPH · Warp Studio")
@@ -681,7 +703,7 @@ class WarpDamBreakStudio:
                         style=(
                             "position:relative;width:100%;height:100%;"
                             "min-width:0;min-height:0;overflow:hidden;"
-                            "background:#07101f;"
+                            "background:#060a15;"
                         ),
                     ):
                         html.Img(
@@ -692,7 +714,7 @@ class WarpDamBreakStudio:
                             style=(
                                 "position:absolute;inset:0;width:100%;height:100%;"
                                 "object-fit:contain;z-index:2;pointer-events:none;"
-                                "background:#07101f;"
+                                "background:#060a15;"
                             ),
                         )
                         view = vtk.VtkRemoteView(
@@ -712,26 +734,25 @@ class WarpDamBreakStudio:
                         self.ctrl.view_update = view.update
                         self.ctrl.view_resize = view.resize
                         self.ctrl.view_reset_camera = view.reset_camera
-                        with html.Div(
-                            classes="viewport-hud",
-                            style=(
-                                "position:absolute;top:18px;left:18px;z-index:3;"
-                                "background:rgba(7,16,31,.72);"
-                                "border:1px solid rgba(140,180,230,.14);"
-                                "border-radius:16px;padding:12px 15px;"
-                                "pointer-events:none;"
-                            ),
-                        ):
-                            html.Div("LIVE PARTICLE FIELD", classes="eyebrow")
-                            html.Div(
-                                "{{ step.toLocaleString() }} / "
-                                "{{ step_total.toLocaleString() }} steps",
-                                classes="text-h6",
+                        with html.Div(classes="viewport-controls"):
+                            v3.VBtn(
+                                icon="mdi-crosshairs-gps",
+                                variant="text",
+                                size="small",
+                                classes="viewport-btn",
+                                click=self.ctrl.reset_camera,
+                                title="Reset view",
                             )
-                            html.Div(
-                                "t = {{ sim_time.toExponential(3) }} s · "
-                                "{{ fluid_particles.toLocaleString() }} fluid",
-                                classes="text-caption text-medium-emphasis",
+                            v3.VBtn(
+                                icon=(
+                                    "colorbar_visible ? 'mdi-gradient-vertical'"
+                                    " : 'mdi-gradient-horizontal'"
+                                ),
+                                variant="text",
+                                size="small",
+                                classes="viewport-btn",
+                                click="colorbar_visible = !colorbar_visible",
+                                title="Toggle color scale",
                             )
                         with html.Div(
                             classes="timeline",

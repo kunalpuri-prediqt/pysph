@@ -102,6 +102,10 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     scene.set_obstacle_visible(False)
     assert scene.obstacle.actor.GetVisibility() == 0
     assert scene.context_obstacle.GetVisibility() == 0
+    scene.set_colorbar_visible(False)
+    assert scene.scalar_bar.GetVisibility() == 0
+    scene.set_colorbar_visible(True)
+    assert scene.scalar_bar.GetVisibility() == 1
 
 
 def test_particle_scene_produces_browser_fallback_image():
@@ -130,6 +134,8 @@ def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
     assert 'class="studio-workspace"' in markup
     assert 'class="viewport-wrap"' in markup
     assert 'class="details-panel"' in markup
+    assert 'class="viewport-controls"' in markup
+    assert "viewport-hud" not in markup
     assert "viewport-container" not in markup
     assert "position:relative;display:grid" in markup
     assert "position:absolute;inset:0;width:100%;height:100%" in markup

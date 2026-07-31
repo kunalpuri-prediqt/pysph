@@ -100,8 +100,8 @@ class ParticleScene:
 
     def __init__(self):
         self.renderer = vtkRenderer()
-        self.renderer.SetBackground(0.018, 0.027, 0.055)
-        self.renderer.SetBackground2(0.07, 0.105, 0.16)
+        self.renderer.SetBackground(0.012, 0.020, 0.043)
+        self.renderer.SetBackground2(0.043, 0.086, 0.132)
         self.renderer.GradientBackgroundOn()
         self.render_window = vtkRenderWindow()
         self.render_window.AddRenderer(self.renderer)
@@ -134,18 +134,25 @@ class ParticleScene:
         self.scalar_bar = vtkScalarBarActor()
         self.scalar_bar.SetLookupTable(self.lookup)
         self.scalar_bar.SetTitle("Resolution")
-        self.scalar_bar.SetNumberOfLabels(4)
+        self.scalar_bar.SetNumberOfLabels(5)
         self.scalar_bar.SetLabelFormat("%.2g")
-        self.scalar_bar.SetPosition(0.86, 0.07)
-        self.scalar_bar.SetWidth(0.085)
-        self.scalar_bar.SetHeight(0.28)
-        self.scalar_bar.SetMaximumWidthInPixels(110)
-        self.scalar_bar.SetMaximumHeightInPixels(280)
+        self.scalar_bar.SetOrientationToVertical()
+        self.scalar_bar.SetPosition(0.918, 0.08)
+        self.scalar_bar.SetWidth(0.06)
+        self.scalar_bar.SetHeight(0.84)
+        self.scalar_bar.SetMaximumWidthInPixels(96)
+        self.scalar_bar.SetMaximumHeightInPixels(4000)
+        self.scalar_bar.SetBarRatio(0.26)
+        self.scalar_bar.SetTextPad(6)
         self.scalar_bar.UnconstrainedFontSizeOn()
-        self.scalar_bar.GetTitleTextProperty().SetColor(0.85, 0.92, 1.0)
-        self.scalar_bar.GetTitleTextProperty().SetFontSize(14)
-        self.scalar_bar.GetLabelTextProperty().SetColor(0.72, 0.82, 0.94)
+        self.scalar_bar.GetTitleTextProperty().SetColor(0.90, 0.95, 1.0)
+        self.scalar_bar.GetTitleTextProperty().SetFontSize(15)
+        self.scalar_bar.GetTitleTextProperty().SetBold(1)
+        self.scalar_bar.GetTitleTextProperty().SetItalic(0)
+        self.scalar_bar.GetLabelTextProperty().SetColor(0.76, 0.86, 0.98)
         self.scalar_bar.GetLabelTextProperty().SetFontSize(12)
+        self.scalar_bar.GetLabelTextProperty().SetBold(0)
+        self.scalar_bar.GetLabelTextProperty().SetItalic(0)
         self.renderer.AddViewProp(self.scalar_bar)
         self.scalar = "resolution"
         self._add_context()
@@ -193,6 +200,9 @@ class ParticleScene:
     def reset_camera(self):
         self._set_camera()
         self.renderer.ResetCameraClippingRange()
+
+    def set_colorbar_visible(self, visible):
+        self.scalar_bar.SetVisibility(bool(visible))
 
     def set_scalar(self, scalar):
         if scalar not in SCALARS:
