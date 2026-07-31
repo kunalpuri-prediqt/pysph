@@ -35,6 +35,9 @@ effect at the next complete solver-step boundary. The 3D camera remains
 interactive while paused, and the timeline can inspect buffered frames without
 altering GPU solver state.
 
+The Trame server disables its idle auto-shutdown so an SSH-forwarded deployment
+remains available between browser sessions.
+
 The adaptive mode is an engineering smoke demonstration. Its equal-mass
 eight-child stencil and host-side mutation checkpoints are not a validated or
 performance-ready APR formulation.

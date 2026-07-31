@@ -724,6 +724,7 @@ def main():
         host=args.host,
         port=args.port,
         open_browser=not args.no_browser,
+        timeout=0,
     )
 
 

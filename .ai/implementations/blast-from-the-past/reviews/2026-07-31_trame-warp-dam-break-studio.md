@@ -111,6 +111,9 @@ The rendered particle viewport is:
   app now uses Vuetify's full-height layout/container pattern and ships the
   current server render as an image fallback. The last completed NPZ is restored
   after restart so a visible frame does not depend on launching another run.
+- Trame's default five-minute no-client timeout stopped the transient GCP
+  service between browser refreshes. The app now starts with `timeout=0`; the
+  deployment unit also uses systemd restart-on-failure semantics.
 - VTK emits a benign headless `DISPLAY=:0` warning before selecting EGL in the
   non-browser renderer.
 - Snapshot transport is intentionally lossy under browser backpressure; the
