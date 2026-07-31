@@ -215,7 +215,7 @@ class ParticleScene:
         self.renderer.AddActor(tank_actor)
 
         cube = vtkCubeSource()
-        cube.SetCenter(2.5, 0.0, 0.0805)
+        cube.SetCenter(3.0, 0.0, 0.0805)
         cube.SetXLength(0.16)
         cube.SetYLength(0.4)
         cube.SetZLength(0.161)
@@ -229,6 +229,17 @@ class ParticleScene:
         cube_actor.GetProperty().SetEdgeColor(1.0, 0.62, 0.22)
         self.renderer.AddActor(cube_actor)
         self.context_obstacle = cube_actor
+        self.context_obstacle_source = cube
+
+    def _fit_context_obstacle(self, points):
+        """Match the drawn obstacle box to the actual obstacle particles."""
+        lo = points.min(axis=0)
+        hi = points.max(axis=0)
+        self.context_obstacle_source.SetBounds(
+            float(lo[0]), float(hi[0]),
+            float(lo[1]), float(hi[1]),
+            0.0, float(hi[2]),
+        )
 
     def _set_camera(self):
         camera = self.renderer.GetActiveCamera()
@@ -294,6 +305,8 @@ class ParticleScene:
         self.wall.update(xyz[wall_mask])
         self.obstacle.update(xyz[obstacle_mask])
         self.obstacle.actor.SetVisibility(False)
+        if np.any(obstacle_mask):
+            self._fit_context_obstacle(xyz[obstacle_mask])
         self.context_obstacle.SetVisibility(bool(np.any(obstacle_mask)))
         self.set_scalar(self.scalar)
         self.renderer.ResetCameraClippingRange()

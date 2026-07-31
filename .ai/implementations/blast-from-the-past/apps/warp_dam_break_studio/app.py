@@ -96,8 +96,8 @@ class WarpDamBreakStudio:
             "xsph_eps": 0.5,
             "cfl": 0.3,
             "n_damp": 50,
-            "fine_xmin": 1.75,
-            "fine_xmax": 2.8,
+            "fine_xmin": 2.4,
+            "fine_xmax": 3.5,
             "fine_zmax": 0.65,
             "scalar": "resolution",
             "scalar_items": [
@@ -541,7 +541,7 @@ class WarpDamBreakStudio:
                                 with v3.VRow(dense=True):
                                     with v3.VCol(cols=6):
                                         v3.VTextField(
-                                            v_model=("fine_xmin", 1.75),
+                                            v_model=("fine_xmin", 2.4),
                                             label="Fine x min",
                                             type="number",
                                             density="compact",
@@ -549,7 +549,7 @@ class WarpDamBreakStudio:
                                         )
                                     with v3.VCol(cols=6):
                                         v3.VTextField(
-                                            v_model=("fine_xmax", 2.8),
+                                            v_model=("fine_xmax", 3.5),
                                             label="Fine x max",
                                             type="number",
                                             density="compact",

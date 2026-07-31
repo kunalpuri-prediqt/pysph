@@ -407,6 +407,7 @@ class DamBreakConfig:
     dt_min: float = 0.0
     dt_max: float | None = None
     with_obstacle: bool = True
+    obstacle_center_x: float = 3.0
     adapt_every: int = 5
     max_splits_per_adapt: int = 128
     fine_bounds: tuple[float, float, float, float, float, float] = (
@@ -496,6 +497,7 @@ class WarpDamBreakSimulation:
             hdx=self.config.hdx,
             rho0=self.config.rho0,
             with_obstacle=self.config.with_obstacle,
+            obstacle_center_x=self.config.obstacle_center_x,
         )
 
     def _to_warp(self, source, name):
