@@ -3163,7 +3163,8 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
                           gx=0.0, gy=0.0, gz=-9.81, gravity_ramp=1.0,
                           adaptive_dt=False, cfl=0.25, dt_min=0.0,
                           dt_max=np.inf, adaptive_dt_scale=1.0,
-                          step_dt_max=np.inf, push=False, return_dt=False):
+                          step_dt_max=np.inf, push=False, return_dt=False,
+                          neighbor_mode='grid'):
     """One 3D dam-break WCSPH continuity-density PEC step (ADR-0005).
 
     Multi-array: the fluid's acceleration and density rate sum over the fluid
@@ -3173,7 +3174,9 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
     density (hence pressure) responds to approaching fluid. Walls use
     ``TaitEOSHGCorrection`` (clamped ``p >= 0``); the fluid uses Tait EOS.
     Gravity is added to the fluid acceleration with an optional ``n_damp`` ramp
-    (``gravity_ramp`` in ``[0, 1]``). All neighbour traversal is grid-direct.
+    (``gravity_ramp`` in ``[0, 1]``). ``neighbor_mode='grid'`` preserves the
+    uniform grid-direct default; ``'multilevel'`` routes the same generated
+    equation blocks through :class:`MultilevelGridWarpNNPS`.
 
     This is additive to the backend: it composes the existing generated equation
     blocks (run with ``accumulate_outputs=True`` over each source) and the
@@ -3224,19 +3227,21 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
             _run_equation_group(nnps, s_index, fluid_index,
                                 list(_WCSPH_DAM_BREAK_FLUID_BLOCKS),
                                 scalar_values={'alpha': alpha, 'beta': beta},
-                                kernel=kernel, neighbor_mode='grid',
+                                kernel=kernel, neighbor_mode=neighbor_mode,
                                 accumulate_outputs=True)
         # XSPH position correction from fluid neighbours only.
         if use_xsph:
             _run_equation_group(nnps, fluid_index, fluid_index,
                                 [XSPHCorrection()],
                                 scalar_values={'eps': eps}, kernel=kernel,
-                                neighbor_mode='grid', accumulate_outputs=True)
+                                neighbor_mode=neighbor_mode,
+                                accumulate_outputs=True)
         # Walls: density rate from the fluid only.
         for w_index in solid_indices:
             _run_equation_group(nnps, fluid_index, w_index,
                                 [ContinuityEquation()], kernel=kernel,
-                                neighbor_mode='grid', accumulate_outputs=True)
+                                neighbor_mode=neighbor_mode,
+                                accumulate_outputs=True)
         # Gravity (ramped) into the fluid acceleration.
         apply_body_force(fluid, gx=gx, gy=gy, gz=gz, dim=dim,
                          ramp=gravity_ramp, device=device, push=False)
@@ -3246,7 +3251,7 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
     if adaptive_dt:
         dt = compute_wcsph_adaptive_timestep(
             nnps, pa_index=fluid_index, c0=c0, cfl=cfl, dt_min=dt_min,
-            dt_max=dt_max, push=False, neighbor_mode='grid'
+            dt_max=dt_max, push=False, neighbor_mode=neighbor_mode
         )
         dt = min(float(dt) * float(adaptive_dt_scale), float(step_dt_max))
     for pa in arrays:

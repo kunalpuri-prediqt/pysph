@@ -17,7 +17,9 @@ NVIDIA Warp API choices, kernel model, memory layout assumptions, and how Warp c
 
 The first likely Warp integration boundary is a DeviceHelper-like mirror, not a replacement of ParticleArray host storage. The spec identifies required Warp primitives: device array creation, selective/full push and pull, Local-first partition/alignment, strided gather/scatter, resize/fill, add/remove/extract/append, and min/max if parity with current helper is desired.
 
-Warp imports successfully in the active environment as version `1.14.0`. Before code, decide whether Warp appears as a new `backend='warp'`, a CUDA backend variant, or a separate helper.
+Warp imports successfully in the active environment as version `1.15.0`.
+Before production promotion, decide whether Warp appears as a new
+`backend='warp'`, a CUDA backend variant, or a separate helper.
 
 ADR-0002 accepted the DeviceHelper-like mirror direction. The prototype adds `pysph/base/warp_device_helper.py`, exposes `backend='warp'` through ParticleArray backend resolution, and uses Warp gather kernels for alignment over scalar and strided properties. It now also supports remove, remove-tagged, add, append, extend, and extract through ParticleArray public methods. Focused Warp helper tests cover the main prototype surface and pass against a rebuilt `pysph.base.particle_array` extension.
 
@@ -33,7 +35,8 @@ device-resident.
 
 ## Key sub-topics
 
-- Warp version/API surface - Active environment has Warp `1.14.0`; confirm documentation set with team.
+- Warp version/API surface - Active environment has Warp `1.15.0`; confirm
+  the minimum supported version and documentation set with the team.
 - Kernel launch model for partition/gather/scatter kernels - Confirm with prototype.
 - Compatibility with existing PySPH GPU pathways.
 - Backend naming and ownership ADR.

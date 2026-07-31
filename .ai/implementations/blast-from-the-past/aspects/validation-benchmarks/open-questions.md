@@ -7,3 +7,6 @@
   the Warp runner should use PySPH-like adaptive timestep policy: `n_damp`
   growth and temporary output-time landing caps. The old initial-`dt` capped
   policy remains available as `--warp-timestep-policy current` for diagnostics.
+- [open 2026-07-31] Which literature-reconciled split/merge operator,
+  transition correction, and convergence case should gate promotion of the
+  two-level adaptive dam-break beyond engineering-smoke status?

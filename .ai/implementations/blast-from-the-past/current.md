@@ -1,81 +1,52 @@
 # Current - blast-from-the-past
 
-Updated: 2026-07-26T22:03:10 CEST by codex
+Updated: 2026-07-31T12:55:00 CEST by codex
 
-**Status:** The Warp backend has device-mirrored particle state, grid-direct
-3D WCSPH, generated/fused equation groups, periodic neighbors, validated 2D
-elliptical-drop and 3D dam-break cases, and ADR-0006 P0-P3 floating-rigid-body
-support. P2 (`bb3843f7`) keeps moment reduction, 3x3 angular solve, RK2 state,
-and rigid motion on the GPU. P3 adds deterministic two-pass Liu fluid/rigid
-coupling, static rigid number density, device density/body-force staging, and
-the sibling `wc_sph_dam_break_rigid_step` without modifying the fixed-wall
-driver.
+**Status:** The Warp backend now has a reviewed engineering checkpoint for
+dynamic two-level particle resolution and a local Trame/VTK browser studio.
+Both have prototype-owner authorization for a local `prototype:` commit.
 
-**Active aspects:** warp-backend, gpu-nnps, particle-memory,
-validation-benchmarks, host-integration.
+**Adaptive dam-break checkpoint:** `pysph/base/warp_adaptive.py` adds stable
+particle/family identity, deterministic equal-mass eight-child split,
+complete-family merge, incremental Warp stepping, snapshots, telemetry, and
+NPZ persistence. Adaptation is host-orchestrated at explicit checkpoints;
+generated WCSPH equations and `MultilevelGridWarpNNPS` run on CUDA between
+them. The equal-mass stencil is software-smoke evidence, not production APR.
 
-**In-flight experiment:**
-`experiments/2026-06-19_warp-floating-body-rigid` (ADR-0006). P0-P3 are done;
-P3 is approved by @prabhu and committed locally. P4 contact/long-horizon fidelity and the
-photorealistic animation remain.
+The RTX 5090 250-step case completed in 4.474 cached seconds to simulated
+`t=0.131621`, with 1,721 fluid particles (897 coarse + 824 fine), 103 split
+parents, exact mass 1,000, zero relative mass drift, and finite state. No
+complete family left the fine region during this short run; merge is covered
+by deterministic controller tests.
 
-`experiments/2026-07-06_warp-adaptive-particle-resolution-p0` is active under
-the approved dynamic-APR plan. The first checkpoint proves the existing
-multi-solid driver can run a fixed Kleefsman obstacle: a warm 1,000-fluid +
-3,824-wall + 4-obstacle case ran 250 steps to `t=0.258455`, remained finite,
-developed 150.147 kPa maximum obstacle pressure, and kept obstacle device
-coordinates bit-identical.
+**Browser studio:** The local Trame 3/Vuetify 3 app under
+`apps/warp_dam_break_studio/` exposes uniform/adaptive options, physics and
+refinement controls, a VTK particle viewport, scalar coloring, local/remote
+rendering, pause/resume/single-step/cancel, telemetry, and bounded replay.
+CUDA runs in a spawned worker; final NPZ and JSON manifest include runtime GPU
+metadata. The worker protocol passed pause/step/resume on the RTX 5090.
 
-The multilevel-GPU-NNPS milestone (`plans/2026-07-06_warp-multilevel-gpu-nnps.md`,
-status completed) has landed steps 1-3 and ADR-0007 (Accepted). New module
-`pysph/base/warp_multilevel_nnps.py` provides `MultilevelGridWarpNNPS`: discrete
-half-open smoothing-length levels, a flattened per-level global cell list, and
-exact variable-stencil cross-level traversal. Construction is device-resident
-(GPU level assignment + count/max-h/AABB reductions, only O(nlevels) scalar
-readback). All eight kill-gate fixtures pass, a synthetic localized-refinement
-fixture shows ~9x lower candidate work (197k vs 1.77M pairs) with identical
-accepted sets, and `warp_codegen` gained `neighbor_mode='multilevel'` so
-generated SPH equation groups consume the multilevel structure directly
-(summation density matches the uniform grid in 2D and 3D). Multilevel + periodic
-is refused. fp32 adaptive-timestep plus fused pressure/viscosity/continuity/XSPH
-multilevel parity now passes in 3D. The owner explicitly deferred fp64.
+**Latest validation:** adaptive/app unit suite `19 passed`; Warp NNPS
+`35 passed`; Warp codegen `10 passed`; complete Warp SPH file `58 passed` in
+38:59. The isolated Warp files emit only the existing two Python 3.14 ctypes
+deprecations from `warp-lang`. Memory validation and `git diff --check` pass.
 
-The per-level dense/sparse hybrid resolves the dense-memory kill case. GPU
-radix-sort/run-length encoding measures occupied cells; levels with
-`logical_cells / occupied_cells > 4` use sorted int32 keys and device
-lower-bound lookup, while compact levels retain dense count/scan/scatter.
-Disconnected patches fell from 520,552 forced-dense bytes to 8,900 hybrid
-bytes, below the 19,432-byte saved WCSPH state, with exact accepted pairs.
-Sparse lookup is a memory fallback (3.65x slower fused on that tiny case), not a
-general speed claim; connected fine levels remain dense.
+**Review state:** prototype-owner authorization recorded:
 
-**Latest validation:** fp32 multilevel SPH subset: `4 passed`; Warp NNPS:
-`35 passed`; codegen: `10 passed`. Forced-sparse generated 3D density and the
-fused WCSPH/adaptive-timestep parity gate pass. The monolithic SPH file hit the documented
-in-process PTX-JIT accumulation limit after 2,988s; focused validation is the
-operational gate on this WSL2 host. Final P3 Warp SPH suite before this addition:
-`54 passed, 2 warnings`. The 7,458-particle coupled first-plunge transient ran
-241 steps to `t=0.200603`,
-remained finite with device error 0, moved/rotated the body from computed fluid
-reaction, and preserved relative geometry to `1.90e-6`. The review image and
-metrics are in
-`reviews/2026-06-20_warp-liu-fluid-rigid-coupling-p3.md`.
+- `reviews/2026-07-31_warp-two-level-adaptive-dam-break-smoke.md`
+- `reviews/2026-07-31_trame-warp-dam-break-studio.md`
 
-**Open approvals:** P3 and 3D dam-break reviews are approved by @prabhu. The
-sparse/hybrid checkpoint has prototype-owner authorization for a local commit.
-PR #435 has no cumulative exact `@prabhu: LGTM`, so pushing this checkpoint to
-that upstream PR remains blocked.
+Prototype authorization permits the requested commit and push to the owner's
+fork for VM deployment. Cumulative exact `@prabhu: LGTM` remains required
+before upstream promotion or merge into a production/release branch.
 
-**Next action:** Review and commit the completed ADR-0007 hybrid checkpoint,
-then write the next Tier 2 plan for runtime APR particle allocation,
-split/merge, conservation, and adaptive dam-break integration. Reconcile the
-P0 stencil convention before locking production split weights. Run the three warp
-test files SEPARATELY (`test_warp_nnps.py` 35, `test_warp_codegen.py` 10,
-`test_warp_sph.py` 57) -- the combined single-process command hangs
-pre-existingly on the WSL2 PTX-JIT. P0 stencil-convention reconciliation remains
-a prerequisite for production APR weights; floating-body P4 remains queued.
+**Known limitations:** production APR still needs a reconciled transfer
+operator, transition correction/shifting, device-side allocation/compaction,
+longer obstacle-impact and convergence evidence. Automated Windows Edge capture
+could not complete Trame's WSL loopback WebSocket, so hands-on browser
+orbit/pan/zoom and local/remote switching remain an acceptance check.
 
-**Known validation limitation:** Compyle 0.9.1 on Python 3.14 cannot run the
-shipped CPU rigid Application (`ast.Str` removal). P3 uses direct NumPy
-primitive parity plus end-to-end GPU smoke/transient validation; the review
-discloses that a monolithic hand-staged EPEC oracle was not added.
+**Next action:** push the reviewed commit, deploy it to
+`gcp-prediqt-rtx6000x1`, and run the app through a local SSH tunnel. A later
+Tier-2 plan should choose between device-resident adaptation and the
+literature/convergence checkpoint.

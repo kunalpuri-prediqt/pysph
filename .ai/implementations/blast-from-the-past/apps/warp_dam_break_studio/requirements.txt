@@ -1,0 +1,3 @@
+trame>=3.13,<4
+trame-vtk>=2.11,<3
+trame-vuetify>=3.2,<4
