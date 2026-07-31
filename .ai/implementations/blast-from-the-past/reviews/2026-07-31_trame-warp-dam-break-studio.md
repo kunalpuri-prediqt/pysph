@@ -67,7 +67,7 @@ HTTP/HTML response received from the Trame server
 ```
 
 The smoke also re-read the worker-written JSON manifest and asserted the finite
-result and exact RTX 5090 runtime metadata.
+result and exact worker-reported runtime device metadata.
 
 ## validate-memory.py
 

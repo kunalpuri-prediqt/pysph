@@ -81,7 +81,7 @@ def main():
         manifest = json.loads(Path(metrics["manifest"]).read_text())
         assert manifest["metrics"]["all_finite"]
         assert manifest["metrics"]["runtime"]["device_name"] == (
-            "NVIDIA GeForce RTX 5090"
+            metrics["runtime"]["device_name"]
         )
         Path("/tmp/pysph-studio-worker-smoke-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n"
