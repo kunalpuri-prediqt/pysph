@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+
 import numpy as np
 
-from vtkmodules.util.numpy_support import numpy_to_vtk
+from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkFloatArray, vtkLookupTable, vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkPolyData
 from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkPlaneSource
+from vtkmodules.vtkIOImage import vtkJPEGWriter
 from vtkmodules.vtkRenderingAnnotation import vtkAxesActor, vtkScalarBarActor
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
@@ -17,6 +20,7 @@ from vtkmodules.vtkRenderingCore import (
     vtkRenderer,
     vtkRenderWindow,
     vtkRenderWindowInteractor,
+    vtkWindowToImageFilter,
 )
 
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa: F401
@@ -234,3 +238,19 @@ class ParticleScene:
 
     def set_obstacle_visible(self, visible):
         self.obstacle.actor.SetVisibility(bool(visible))
+
+    def jpeg_data_uri(self, quality=82):
+        """Capture the current render as a browser-safe fallback image."""
+        capture = vtkWindowToImageFilter()
+        capture.SetInput(self.render_window)
+        capture.SetInputBufferTypeToRGB()
+        capture.ReadFrontBufferOff()
+        capture.Update()
+        writer = vtkJPEGWriter()
+        writer.SetInputConnection(capture.GetOutputPort())
+        writer.SetQuality(int(quality))
+        writer.WriteToMemoryOn()
+        writer.Write()
+        payload = vtk_to_numpy(writer.GetResult()).tobytes()
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"

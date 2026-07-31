@@ -1,9 +1,11 @@
+import base64
+import json
 from queue import Queue
 
 import numpy as np
 import pytest
 
-from app import validate_run_config
+from app import load_saved_result, validate_run_config
 from vtk_scene import ParticleScene
 from worker import FrameBuffer, put_latest
 
@@ -97,3 +99,21 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     scene.set_wall_opacity(0.4)
     scene.set_obstacle_visible(False)
     assert scene.obstacle.actor.GetVisibility() == 0
+
+
+def test_particle_scene_produces_browser_fallback_image():
+    scene = ParticleScene()
+    scene.update(_snapshot())
+    uri = scene.jpeg_data_uri(quality=75)
+    prefix, encoded = uri.split(",", 1)
+    assert prefix == "data:image/jpeg;base64"
+    assert base64.b64decode(encoded).startswith(b"\xff\xd8\xff")
+
+
+def test_load_saved_result_restores_snapshot_and_metrics(tmp_path):
+    path = tmp_path / "result.npz"
+    snapshot = _snapshot()
+    np.savez(path, **snapshot, metrics=json.dumps({"step": 12, "steps": 12}))
+    loaded_snapshot, metrics = load_saved_result(path)
+    assert metrics == {"step": 12, "steps": 12}
+    np.testing.assert_array_equal(loaded_snapshot["xyz"], snapshot["xyz"])

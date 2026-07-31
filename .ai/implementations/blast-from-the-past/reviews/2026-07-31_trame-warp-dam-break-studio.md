@@ -106,6 +106,11 @@ The rendered particle viewport is:
   particle/scalar-bar props. The viewport now deliberately uses Trame remote
   rendering; browser orbit/pan/zoom remain interactive while the server renders
   pixels and avoids transferring the full particle geometry.
+- The first remote-only deployment exposed a collapsed Vuetify main-content
+  height: telemetry rendered, but the VTK element had no usable viewport. The
+  app now uses Vuetify's full-height layout/container pattern and ships the
+  current server render as an image fallback. The last completed NPZ is restored
+  after restart so a visible frame does not depend on launching another run.
 - VTK emits a benign headless `DISPLAY=:0` warning before selecting EGL in the
   non-browser renderer.
 - Snapshot transport is intentionally lossy under browser backpressure; the

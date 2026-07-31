@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
 
+import numpy as np
 from trame.app import get_server
 from trame.ui.vuetify3 import SinglePageWithDrawerLayout
 from trame.widgets import html, vtk, vuetify3 as v3
@@ -18,6 +20,7 @@ from worker import FrameBuffer, SolverWorker, TERMINAL_STATES
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = "/tmp/pysph-dam-break-studio.npz"
+SNAPSHOT_ARRAYS = ("xyz", "h", "rho", "p", "speed", "kind", "level")
 
 
 def validate_run_config(config, snapshot_stride):
@@ -40,6 +43,19 @@ def validate_run_config(config, snapshot_stride):
     return config
 
 
+def load_saved_result(path):
+    """Load the final particle frame and metrics from a solver NPZ."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    with np.load(path, allow_pickle=False) as data:
+        if any(name not in data for name in SNAPSHOT_ARRAYS):
+            return None
+        snapshot = {name: np.asarray(data[name]) for name in SNAPSHOT_ARRAYS}
+        metrics = json.loads(str(data["metrics"].item()))
+    return snapshot, metrics
+
+
 class WarpDamBreakStudio:
     def __init__(self, server=None):
         self.server = server or get_server(
@@ -53,6 +69,8 @@ class WarpDamBreakStudio:
         self._configure_state()
         self._bind_controller()
         self._build_ui()
+        self._restore_previous_result()
+        self.ctrl.on_server_ready.add(self._on_server_ready)
         self.ctrl.on_server_ready.add_task(self._poll_worker)
         self.ctrl.on_server_exited.add(self.close)
 
@@ -111,6 +129,7 @@ class WarpDamBreakStudio:
             "steps_per_second": None,
             "error_text": "",
             "output_path": DEFAULT_OUTPUT,
+            "frame_image": "",
         })
 
     def _bind_controller(self):
@@ -202,23 +221,23 @@ class WarpDamBreakStudio:
 
     def reset_camera(self):
         self.scene.reset_camera()
-        self.ctrl.view_update()
+        self._refresh_view()
 
     def _on_scalar(self, scalar, **_):
         self.scene.set_scalar(scalar)
-        self.ctrl.view_update()
+        self._refresh_view()
 
     def _on_particle_scale(self, particle_scale, **_):
         self.scene.set_particle_scale(particle_scale)
-        self.ctrl.view_update()
+        self._refresh_view()
 
     def _on_wall_opacity(self, wall_opacity, **_):
         self.scene.set_wall_opacity(wall_opacity)
-        self.ctrl.view_update()
+        self._refresh_view()
 
     def _on_obstacle_visible(self, obstacle_visible, **_):
         self.scene.set_obstacle_visible(obstacle_visible)
-        self.ctrl.view_update()
+        self._refresh_view()
 
     def _on_frame_index(self, frame_index, **_):
         if not len(self.frames):
@@ -244,6 +263,34 @@ class WarpDamBreakStudio:
                 "p_max": metrics.get("p_max", 0.0),
                 "steps_per_second": metrics.get("steps_per_second"),
             })
+        self.state.frame_image = self.scene.jpeg_data_uri()
+        self.ctrl.view_update()
+
+    def _refresh_view(self, **_):
+        self.scene.render_window.Render()
+        self.state.frame_image = self.scene.jpeg_data_uri()
+        self.ctrl.view_update()
+
+    def _restore_previous_result(self):
+        try:
+            saved = load_saved_result(self.state.output_path)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            return
+        if saved is None:
+            return
+        snapshot, metrics = saved
+        index = self.frames.append(snapshot, metrics)
+        self.state.update({
+            "status": "completed",
+            "status_detail": "Restored the latest completed GPU result",
+            "frame_index": index,
+            "frame_max": index,
+            "step_total": metrics.get("steps", metrics.get("step", 0)),
+        })
+        self._show_frame(snapshot, metrics)
+
+    def _on_server_ready(self, **_):
+        self.ctrl.view_resize()
         self.ctrl.view_update()
 
     def _handle_message(self, message):
@@ -330,20 +377,34 @@ class WarpDamBreakStudio:
         .metric-label { color: #8ca4c2; font-size: .68rem; text-transform:
           uppercase; letter-spacing: .08em; }
         .metric-value { color: #f4f8ff; font-size: 1.15rem; font-weight: 650; }
-        .viewport-wrap { position: relative; height: 100%; min-height: 0; }
-        .viewport-hud { position: absolute; top: 18px; left: 18px; z-index: 2;
+        .studio-main { height: 100vh !important; max-height: 100vh !important;
+          overflow: hidden; background: #07101f; }
+        .viewport-container { position: relative; height: calc(100vh - 64px)
+          !important; min-height: calc(100vh - 64px); overflow: hidden; }
+        .viewport-wrap { position: absolute; inset: 0; min-height: 420px;
+          overflow: hidden; background: #07101f; }
+        .viewport-fallback { position: absolute; inset: 0; width: 100%;
+          height: 100%; object-fit: contain; z-index: 2; pointer-events: none;
+          background: #07101f; }
+        .viewport-remote { position: absolute !important; inset: 0; width: 100%;
+          height: 100%; z-index: 1; background: transparent !important; }
+        .viewport-hud { position: absolute; top: 18px; left: 18px; z-index: 3;
           background: rgba(7, 16, 31, .72); border: 1px solid var(--studio-line);
           backdrop-filter: blur(14px); border-radius: 16px; padding: 12px 15px;
           pointer-events: none; }
         .timeline { position: absolute; left: 24px; right: 24px; bottom: 18px;
-          z-index: 3; background: rgba(7, 16, 31, .84);
+          z-index: 4; background: rgba(7, 16, 31, .84);
           border: 1px solid var(--studio-line); backdrop-filter: blur(14px);
           border-radius: 16px; padding: 4px 18px 0; }
         """
-        with SinglePageWithDrawerLayout(self.server) as layout:
+        with SinglePageWithDrawerLayout(
+            self.server, full_height=True, theme="dark"
+        ) as layout:
             layout.root["classes"] = "studio-shell"
+            layout.root["style"] = "height:100vh; min-height:100vh;"
             layout.toolbar["classes"] = "studio-toolbar"
             layout.drawer["classes"] = "studio-drawer"
+            layout.content["classes"] = "studio-main"
             layout.drawer["width"] = 368
             layout.title.set_text("PySPH · Warp Studio")
             with layout.toolbar:
@@ -578,61 +639,72 @@ class WarpDamBreakStudio:
                     )
             with layout.content:
                 html.Style(css)
-                with html.Div(classes="viewport-wrap"):
-                    view = vtk.VtkRemoteView(
-                        self.scene.render_window,
-                        ref="view",
-                        interactive_ratio=0.65,
-                        still_ratio=1,
-                        interactive_quality=70,
-                        still_quality=95,
-                        style="height: 100%; width: 100%;",
-                    )
-                    self.ctrl.view_update = view.update
-                    self.ctrl.view_reset_camera = view.reset_camera
-                    with html.Div(classes="viewport-hud"):
-                        html.Div("LIVE PARTICLE FIELD", classes="eyebrow")
-                        html.Div(
-                            "{{ step.toLocaleString() }} / "
-                            "{{ step_total.toLocaleString() }} steps",
-                            classes="text-h6",
-                        )
-                        html.Div(
-                            "t = {{ sim_time.toExponential(3) }} s · "
-                            "{{ fluid_particles.toLocaleString() }} fluid",
-                            classes="text-caption text-medium-emphasis",
-                        )
-                    with html.Div(classes="timeline"):
-                        v3.VSlider(
-                            v_model=("frame_index", 0),
-                            min=0,
-                            max=("frame_max", 0),
-                            step=1,
-                            hide_details=True,
-                            color="cyan",
-                            prepend_icon=(
-                                "live_view ? 'mdi-access-point' : "
-                                "'mdi-history'"
-                            ),
-                        )
-                with html.Div(
-                    style=(
-                        "position:absolute; right:20px; top:82px; width:220px; "
-                        "z-index:3; display:grid; gap:8px;"
-                    )
+                with v3.VContainer(
+                    fluid=True, classes="pa-0 fill-height viewport-container"
                 ):
-                    for label, expression in (
-                        ("Fine / coarse", "fine_particles + ' / ' + coarse_particles"),
-                        ("Split / merged", "split_parents + ' / ' + merged_families"),
-                        ("Mass drift", "Number(mass_drift).toExponential(2)"),
-                        ("Peak pressure", "Number(p_max).toExponential(2) + ' Pa'"),
-                    ):
-                        with html.Div(classes="metric"):
-                            html.Div(label, classes="metric-label")
+                    with html.Div(classes="viewport-wrap"):
+                        html.Img(
+                            src=("frame_image",),
+                            v_show=("frame_image.length > 0",),
+                            classes="viewport-fallback",
+                            alt="Rendered adaptive particle field",
+                        )
+                        view = vtk.VtkRemoteView(
+                            self.scene.render_window,
+                            ref="view",
+                            interactive_ratio=0.65,
+                            still_ratio=1,
+                            interactive_quality=70,
+                            still_quality=95,
+                            classes="viewport-remote",
+                            EndAnimation=self._refresh_view,
+                        )
+                        self.ctrl.view_update = view.update
+                        self.ctrl.view_resize = view.resize
+                        self.ctrl.view_reset_camera = view.reset_camera
+                        with html.Div(classes="viewport-hud"):
+                            html.Div("LIVE PARTICLE FIELD", classes="eyebrow")
                             html.Div(
-                                f"{{{{ {expression} }}}}",
-                                classes="metric-value",
+                                "{{ step.toLocaleString() }} / "
+                                "{{ step_total.toLocaleString() }} steps",
+                                classes="text-h6",
                             )
+                            html.Div(
+                                "t = {{ sim_time.toExponential(3) }} s · "
+                                "{{ fluid_particles.toLocaleString() }} fluid",
+                                classes="text-caption text-medium-emphasis",
+                            )
+                        with html.Div(classes="timeline"):
+                            v3.VSlider(
+                                v_model=("frame_index", 0),
+                                min=0,
+                                max=("frame_max", 0),
+                                step=1,
+                                hide_details=True,
+                                color="cyan",
+                                prepend_icon=(
+                                    "live_view ? 'mdi-access-point' : "
+                                    "'mdi-history'"
+                                ),
+                            )
+                    with html.Div(
+                        style=(
+                            "position:absolute; right:20px; top:20px; width:220px; "
+                            "z-index:5; display:grid; gap:8px;"
+                        )
+                    ):
+                        for label, expression in (
+                            ("Fine / coarse", "fine_particles + ' / ' + coarse_particles"),
+                            ("Split / merged", "split_parents + ' / ' + merged_families"),
+                            ("Mass drift", "Number(mass_drift).toExponential(2)"),
+                            ("Peak pressure", "Number(p_max).toExponential(2) + ' Pa'"),
+                        ):
+                            with html.Div(classes="metric"):
+                                html.Div(label, classes="metric-label")
+                                html.Div(
+                                    f"{{{{ {expression} }}}}",
+                                    classes="metric-value",
+                                )
             layout.footer.hide()
         self.ui = layout
 
