@@ -91,7 +91,6 @@ class WarpDamBreakStudio:
                 {"title": "Adaptive · two level", "value": "adaptive"},
                 {"title": "Uniform", "value": "uniform"},
             ],
-            "viewMode": "local",
             "particle_scale": 0.045,
             "wall_opacity": 0.20,
             "obstacle_visible": True,
@@ -502,12 +501,12 @@ class WarpDamBreakStudio:
                                     label="Wall opacity",
                                     thumb_label=True,
                                 )
-                                v3.VSwitch(
-                                    v_model=("viewMode", "local"),
-                                    true_value="local",
-                                    false_value="remote",
-                                    label="Browser-local rendering",
+                                v3.VChip(
+                                    text="RTX server rendering",
+                                    prepend_icon="mdi-server",
                                     color="cyan",
+                                    variant="tonal",
+                                    classes="mb-3",
                                 )
                                 v3.VTextField(
                                     v_model=("output_path", DEFAULT_OUTPUT),
@@ -580,11 +579,13 @@ class WarpDamBreakStudio:
             with layout.content:
                 html.Style(css)
                 with html.Div(classes="viewport-wrap"):
-                    view = vtk.VtkRemoteLocalView(
+                    view = vtk.VtkRemoteView(
                         self.scene.render_window,
-                        namespace="view",
-                        mode="local",
-                        interactive_ratio=1,
+                        ref="view",
+                        interactive_ratio=0.65,
+                        still_ratio=1,
+                        interactive_quality=70,
+                        still_quality=95,
                         style="height: 100%; width: 100%;",
                     )
                     self.ctrl.view_update = view.update

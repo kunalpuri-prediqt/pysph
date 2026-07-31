@@ -16,9 +16,9 @@ status: prototype-approved
 ## Outcome
 
 The local Trame/VTK studio is ready to run uniform or two-level adaptive
-dam-break cases on beast02. It exposes run-defining controls, a responsive dark
-UI, a camera-preserving particle view, pause/resume/single-step/cancel, live
-telemetry, scalar coloring, local/remote rendering, and buffered replay.
+dam-break cases. It exposes run-defining controls, a responsive dark UI, a
+camera-preserving server-rendered particle view, pause/resume/single-step/
+cancel, live telemetry, scalar coloring, and buffered replay.
 
 CUDA runs in a spawned process; only NumPy snapshots and metrics cross the
 process boundary. The worker writes the final NPZ and a JSON manifest with
@@ -102,9 +102,10 @@ The rendered particle viewport is:
 
 ## Risks and incomplete work
 
-- Automated Edge capture from Windows could fetch the WSL-hosted HTML but did
-  not complete Trame's loopback WebSocket, so orbit/pan/zoom, responsive layout,
-  and local/remote switching still need a user-side browser acceptance pass.
+- Browser-local VTK serialization failed on the deployed scene's Gaussian
+  particle/scalar-bar props. The viewport now deliberately uses Trame remote
+  rendering; browser orbit/pan/zoom remain interactive while the server renders
+  pixels and avoids transferring the full particle geometry.
 - VTK emits a benign headless `DISPLAY=:0` warning before selecting EGL in the
   non-browser renderer.
 - Snapshot transport is intentionally lossy under browser backpressure; the

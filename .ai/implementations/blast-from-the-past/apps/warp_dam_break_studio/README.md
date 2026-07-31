@@ -26,7 +26,9 @@ python \
 
 Open `http://127.0.0.1:1234/`.
 
-The app launches every simulation in a fresh spawned process. Pause takes
+The app launches every simulation in a fresh spawned process. The interactive
+VTK viewport is rendered on the GPU server and streamed through Trame, avoiding
+browser-local serialization limits for Gaussian particle actors. Pause takes
 effect at the next complete solver-step boundary. The 3D camera remains
 interactive while paused, and the timeline can inspect buffered frames without
 altering GPU solver state.
