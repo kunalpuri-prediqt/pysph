@@ -35,6 +35,13 @@ SCALARS = {
     "resolution": "level",
 }
 
+SCALAR_TITLES = {
+    "pressure": "Pressure (Pa)",
+    "density": "Density",
+    "speed": "Speed (m/s)",
+    "resolution": "Refinement",
+}
+
 
 class PointCloud:
     def __init__(self, color=(0.2, 0.6, 1.0), opacity=1.0,
@@ -133,7 +140,7 @@ class ParticleScene:
         self.fluid.mapper.ScalarVisibilityOn()
         self.scalar_bar = vtkScalarBarActor()
         self.scalar_bar.SetLookupTable(self.lookup)
-        self.scalar_bar.SetTitle("Resolution")
+        self.scalar_bar.SetTitle("Refinement")
         self.scalar_bar.SetNumberOfLabels(5)
         self.scalar_bar.SetLabelFormat("%.2g")
         self.scalar_bar.SetOrientationToVertical()
@@ -209,7 +216,7 @@ class ParticleScene:
             raise ValueError(f"unknown scalar {scalar!r}")
         self.scalar = scalar
         array_name = SCALARS[scalar]
-        self.scalar_bar.SetTitle(scalar.title())
+        self.scalar_bar.SetTitle(SCALAR_TITLES.get(scalar, scalar.title()))
         self.fluid.mapper.SelectColorArray(array_name)
         self._update_lookup(array_name)
 

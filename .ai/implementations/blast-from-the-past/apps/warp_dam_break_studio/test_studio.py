@@ -97,6 +97,10 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     assert scene.obstacle.polydata.GetNumberOfPoints() == 1
     assert camera.GetPosition() == position
     scene.set_scalar("resolution")
+    assert scene.scalar_bar.GetTitle() == "Refinement"
+    scene.set_scalar("pressure")
+    assert "Pressure" in scene.scalar_bar.GetTitle()
+    scene.set_scalar("resolution")
     scene.set_particle_scale(0.06)
     scene.set_wall_opacity(0.4)
     scene.set_obstacle_visible(False)
@@ -135,6 +139,8 @@ def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
     assert 'class="viewport-wrap"' in markup
     assert 'class="details-panel"' in markup
     assert 'class="viewport-controls"' in markup
+    assert "Reset view" in markup
+    assert "timeline-label" in markup
     assert "viewport-hud" not in markup
     assert "viewport-container" not in markup
     assert "position:relative;display:grid" in markup

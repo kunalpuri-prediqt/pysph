@@ -415,20 +415,21 @@ class WarpDamBreakStudio:
           background: var(--studio-bg); }
         .viewport-remote { position: absolute !important; inset: 0; width: 100%;
           height: 100%; z-index: 1; background: transparent !important; }
-        .viewport-controls { position: absolute; top: 18px; right: 18px;
-          z-index: 5; display: flex; gap: 6px; padding: 5px;
-          background: rgba(10, 19, 37, .62); border: 1px solid var(--studio-line);
+        .viewport-controls { position: absolute; top: 16px; right: 16px;
+          z-index: 5; display: flex; align-items: center; gap: 8px;
+          padding: 7px 8px;
+          background: rgba(10, 19, 37, .78); border: 1px solid var(--studio-line);
           backdrop-filter: blur(16px); border-radius: 14px;
-          box-shadow: 0 8px 24px rgba(3, 8, 18, .40); }
-        .viewport-btn { color: #bfe4f2 !important;
-          transition: color .16s ease, background-color .16s ease; }
-        .viewport-btn:hover { color: var(--studio-cyan) !important;
-          background: rgba(56, 225, 224, .12) !important; }
+          box-shadow: 0 8px 24px rgba(3, 8, 18, .45); }
+        .viewport-btn { letter-spacing: .02em; }
         .timeline { position: absolute; left: 24px; right: 24px; bottom: 18px;
           z-index: 4; background: rgba(9, 17, 34, .82);
           border: 1px solid var(--studio-line); backdrop-filter: blur(16px);
-          border-radius: 16px; padding: 4px 18px 0;
+          border-radius: 16px; padding: 6px 18px 2px;
           box-shadow: 0 10px 30px rgba(3, 8, 18, .38); }
+        .timeline-label { color: #8fbfe0; font-size: .64rem; font-weight: 700;
+          letter-spacing: .14em; text-transform: uppercase; padding-left: 34px;
+          margin-bottom: -2px; }
         .details-panel { width: 292px; height: 100%; overflow-y: auto;
           padding: 18px; background: var(--studio-panel); border-left: 1px solid
           var(--studio-line); box-shadow: -16px 0 36px rgba(0, 0, 0, .22); }
@@ -736,23 +737,23 @@ class WarpDamBreakStudio:
                         self.ctrl.view_reset_camera = view.reset_camera
                         with html.Div(classes="viewport-controls"):
                             v3.VBtn(
-                                icon="mdi-crosshairs-gps",
-                                variant="text",
+                                "Reset view",
+                                prepend_icon="mdi-crosshairs-gps",
+                                variant="tonal",
                                 size="small",
+                                color="cyan",
                                 classes="viewport-btn",
                                 click=self.ctrl.reset_camera,
-                                title="Reset view",
                             )
                             v3.VBtn(
                                 icon=(
-                                    "colorbar_visible ? 'mdi-gradient-vertical'"
-                                    " : 'mdi-gradient-horizontal'"
+                                    "colorbar_visible ? 'mdi-eye' : 'mdi-eye-off'"
                                 ),
-                                variant="text",
+                                variant="tonal",
                                 size="small",
                                 classes="viewport-btn",
                                 click="colorbar_visible = !colorbar_visible",
-                                title="Toggle color scale",
+                                title="Show or hide the color scale",
                             )
                         with html.Div(
                             classes="timeline",
@@ -763,6 +764,12 @@ class WarpDamBreakStudio:
                                 "border-radius:16px;padding:4px 18px 0;"
                             ),
                         ):
+                            html.Div(
+                                "{{ live_view ? 'LIVE' : 'REPLAY' }} · "
+                                "frame {{ (frame_index + 1).toLocaleString() }}"
+                                " / {{ (frame_max + 1).toLocaleString() }}",
+                                classes="timeline-label",
+                            )
                             v3.VSlider(
                                 v_model=("frame_index", 0),
                                 min=0,
@@ -770,6 +777,7 @@ class WarpDamBreakStudio:
                                 step=1,
                                 hide_details=True,
                                 color="cyan",
+                                disabled=("run_active",),
                                 prepend_icon=(
                                     "live_view ? 'mdi-access-point' : "
                                     "'mdi-history'"

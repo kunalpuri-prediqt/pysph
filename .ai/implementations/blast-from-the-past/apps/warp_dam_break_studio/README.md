@@ -35,11 +35,12 @@ drawer, a dedicated full-height 3D center panel, and a collapsible run-details
 panel on the right. The viewport carries a floating control cluster with a
 reset-view button that restores the default camera and a toggle that hides or
 shows the color scale; when shown, the scale is a full-height vertical bar on
-the right edge. The redundant live step/particle overlay was removed because the
-bottom timeline already reports progress. Pause takes
-effect at the next complete solver-step boundary. The 3D camera remains
-interactive while paused, and the timeline can inspect buffered frames without
-altering GPU solver state.
+the right edge labelled by the active field. The redundant live step/particle
+overlay was removed because the bottom timeline already reports progress. Pause
+takes effect at the next complete solver-step boundary. The 3D camera remains
+interactive while paused. The bottom timeline is a live progress indicator while
+a run is active and only becomes an interactive replay scrubber once the run
+completes; scrubbing replays buffered frames and never rewinds the GPU solver.
 
 Fluid particles are rendered as instanced sphere glyphs whose radii follow each
 particle's smoothing length, so coarse and split particles remain visually
