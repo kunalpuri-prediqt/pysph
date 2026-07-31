@@ -4,8 +4,9 @@ from queue import Queue
 
 import numpy as np
 import pytest
+from trame.app import get_server
 
-from app import load_saved_result, validate_run_config
+from app import WarpDamBreakStudio, load_saved_result, validate_run_config
 from vtk_scene import ParticleScene
 from worker import FrameBuffer, put_latest
 
@@ -99,6 +100,7 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     scene.set_wall_opacity(0.4)
     scene.set_obstacle_visible(False)
     assert scene.obstacle.actor.GetVisibility() == 0
+    assert scene.context_obstacle.GetVisibility() == 0
 
 
 def test_particle_scene_produces_browser_fallback_image():
@@ -117,3 +119,14 @@ def test_load_saved_result_restores_snapshot_and_metrics(tmp_path):
     loaded_snapshot, metrics = load_saved_result(path)
     assert metrics == {"step": 12, "steps": 12}
     np.testing.assert_array_equal(loaded_snapshot["xyz"], snapshot["xyz"])
+
+
+def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.DEFAULT_OUTPUT", str(tmp_path / "missing.npz"))
+    server = get_server("studio-layout-test", client_type="vue3")
+    studio = WarpDamBreakStudio(server=server)
+    markup = studio.ui.html
+    assert 'class="studio-workspace"' in markup
+    assert 'class="viewport-wrap"' in markup
+    assert 'class="details-panel"' in markup
+    assert "viewport-container" not in markup

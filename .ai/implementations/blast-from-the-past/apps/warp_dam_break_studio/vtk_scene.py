@@ -11,7 +11,7 @@ from vtkmodules.vtkCommonCore import vtkFloatArray, vtkLookupTable, vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkPolyData
 from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkPlaneSource
 from vtkmodules.vtkIOImage import vtkJPEGWriter
-from vtkmodules.vtkRenderingAnnotation import vtkAxesActor, vtkScalarBarActor
+from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkColorTransferFunction,
@@ -97,7 +97,7 @@ class ParticleScene:
 
         self.fluid = PointCloud(
             color=(0.15, 0.62, 1.0), opacity=0.94,
-            gaussian=True, scale_factor=0.045,
+            gaussian=True, scale_factor=0.035,
         )
         self.wall = PointCloud(
             color=(0.55, 0.66, 0.82), opacity=0.20,
@@ -119,11 +119,17 @@ class ParticleScene:
         self.scalar_bar.SetLookupTable(self.lookup)
         self.scalar_bar.SetTitle("Pressure")
         self.scalar_bar.SetNumberOfLabels(4)
-        self.scalar_bar.SetPosition(0.82, 0.08)
-        self.scalar_bar.SetWidth(0.12)
-        self.scalar_bar.SetHeight(0.34)
+        self.scalar_bar.SetLabelFormat("%.2g")
+        self.scalar_bar.SetPosition(0.86, 0.07)
+        self.scalar_bar.SetWidth(0.085)
+        self.scalar_bar.SetHeight(0.28)
+        self.scalar_bar.SetMaximumWidthInPixels(110)
+        self.scalar_bar.SetMaximumHeightInPixels(280)
+        self.scalar_bar.UnconstrainedFontSizeOn()
         self.scalar_bar.GetTitleTextProperty().SetColor(0.85, 0.92, 1.0)
+        self.scalar_bar.GetTitleTextProperty().SetFontSize(14)
         self.scalar_bar.GetLabelTextProperty().SetColor(0.72, 0.82, 0.94)
+        self.scalar_bar.GetLabelTextProperty().SetFontSize(12)
         self.renderer.AddViewProp(self.scalar_bar)
         self.scalar = "pressure"
         self._add_context()
@@ -146,24 +152,20 @@ class ParticleScene:
         self.renderer.AddActor(actor)
 
         cube = vtkCubeSource()
-        cube.SetCenter(2.5, 0.0, 0.3)
-        cube.SetXLength(0.12)
-        cube.SetYLength(0.36)
-        cube.SetZLength(0.6)
+        cube.SetCenter(2.5, 0.0, 0.0805)
+        cube.SetXLength(0.16)
+        cube.SetYLength(0.4)
+        cube.SetZLength(0.161)
         cube_mapper = vtkPolyDataMapper()
         cube_mapper.SetInputConnection(cube.GetOutputPort())
         cube_actor = vtkActor()
         cube_actor.SetMapper(cube_mapper)
         cube_actor.GetProperty().SetColor(0.95, 0.25, 0.08)
-        cube_actor.GetProperty().SetOpacity(0.12)
+        cube_actor.GetProperty().SetOpacity(0.82)
+        cube_actor.GetProperty().EdgeVisibilityOn()
+        cube_actor.GetProperty().SetEdgeColor(1.0, 0.62, 0.22)
         self.renderer.AddActor(cube_actor)
-
-        axes = vtkAxesActor()
-        axes.SetTotalLength(0.35, 0.35, 0.35)
-        axes.SetShaftTypeToCylinder()
-        axes.SetCylinderRadius(0.035)
-        axes.SetPosition(0.0, -0.32, 0.0)
-        self.renderer.AddActor(axes)
+        self.context_obstacle = cube_actor
 
     def _set_camera(self):
         camera = self.renderer.GetActiveCamera()
@@ -225,6 +227,8 @@ class ParticleScene:
         )
         self.wall.update(xyz[wall_mask])
         self.obstacle.update(xyz[obstacle_mask])
+        self.obstacle.actor.SetVisibility(False)
+        self.context_obstacle.SetVisibility(bool(np.any(obstacle_mask)))
         self.set_scalar(self.scalar)
         self.renderer.ResetCameraClippingRange()
         self.render_window.Render()
@@ -237,7 +241,8 @@ class ParticleScene:
         self.wall.actor.GetProperty().SetOpacity(float(value))
 
     def set_obstacle_visible(self, visible):
-        self.obstacle.actor.SetVisibility(bool(visible))
+        self.obstacle.actor.SetVisibility(False)
+        self.context_obstacle.SetVisibility(bool(visible))
 
     def jpeg_data_uri(self, quality=82):
         """Capture the current render as a browser-safe fallback image."""

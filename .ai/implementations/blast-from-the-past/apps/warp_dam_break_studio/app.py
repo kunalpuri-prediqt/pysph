@@ -53,6 +53,10 @@ def load_saved_result(path):
             return None
         snapshot = {name: np.asarray(data[name]) for name in SNAPSHOT_ARRAYS}
         metrics = json.loads(str(data["metrics"].item()))
+    manifest = path.with_suffix(".json")
+    if manifest.is_file():
+        manifest_data = json.loads(manifest.read_text())
+        metrics.update(manifest_data.get("metrics", {}))
     return snapshot, metrics
 
 
@@ -112,6 +116,7 @@ class WarpDamBreakStudio:
             "particle_scale": 0.045,
             "wall_opacity": 0.20,
             "obstacle_visible": True,
+            "right_panel_open": True,
             "frame_index": 0,
             "frame_max": 0,
             "live_view": True,
@@ -127,6 +132,7 @@ class WarpDamBreakStudio:
             "mass_drift": 0.0,
             "p_max": 0.0,
             "steps_per_second": None,
+            "device_name": "NVIDIA GPU",
             "error_text": "",
             "output_path": DEFAULT_OUTPUT,
             "frame_image": "",
@@ -143,6 +149,7 @@ class WarpDamBreakStudio:
         self.state.change("particle_scale")(self._on_particle_scale)
         self.state.change("wall_opacity")(self._on_wall_opacity)
         self.state.change("obstacle_visible")(self._on_obstacle_visible)
+        self.state.change("with_obstacle")(self._on_obstacle_visible)
         self.state.change("frame_index")(self._on_frame_index)
 
     def _config(self):
@@ -262,6 +269,9 @@ class WarpDamBreakStudio:
                 "mass_drift": metrics.get("mass_drift", 0.0),
                 "p_max": metrics.get("p_max", 0.0),
                 "steps_per_second": metrics.get("steps_per_second"),
+                "device_name": metrics.get("runtime", {}).get(
+                    "device_name", self.state.device_name
+                ),
             })
         self.state.frame_image = self.scene.jpeg_data_uri()
         self.ctrl.view_update()
@@ -379,10 +389,11 @@ class WarpDamBreakStudio:
         .metric-value { color: #f4f8ff; font-size: 1.15rem; font-weight: 650; }
         .studio-main { height: 100vh !important; max-height: 100vh !important;
           overflow: hidden; background: #07101f; }
-        .viewport-container { position: relative; height: calc(100vh - 64px)
-          !important; min-height: calc(100vh - 64px); overflow: hidden; }
-        .viewport-wrap { position: absolute; inset: 0; min-height: 420px;
-          overflow: hidden; background: #07101f; }
+        .studio-workspace { position: relative; display: grid;
+          grid-template-columns: minmax(0, 1fr) auto; width: 100%; height:
+          calc(100vh - 64px); min-height: 420px; overflow: hidden; }
+        .viewport-wrap { position: relative; width: 100%; height: 100%;
+          min-width: 0; min-height: 0; overflow: hidden; background: #07101f; }
         .viewport-fallback { position: absolute; inset: 0; width: 100%;
           height: 100%; object-fit: contain; z-index: 2; pointer-events: none;
           background: #07101f; }
@@ -396,6 +407,13 @@ class WarpDamBreakStudio:
           z-index: 4; background: rgba(7, 16, 31, .84);
           border: 1px solid var(--studio-line); backdrop-filter: blur(14px);
           border-radius: 16px; padding: 4px 18px 0; }
+        .details-panel { width: 292px; height: 100%; overflow-y: auto;
+          padding: 18px; background: var(--studio-panel); border-left: 1px solid
+          var(--studio-line); box-shadow: -16px 0 36px rgba(0, 0, 0, .18); }
+        .details-grid { display: grid; gap: 10px; }
+        @media (max-width: 1050px) {
+          .details-panel { position: absolute; top: 0; right: 0; z-index: 8; }
+        }
         """
         with SinglePageWithDrawerLayout(
             self.server, full_height=True, theme="dark"
@@ -425,6 +443,12 @@ class WarpDamBreakStudio:
                     variant="text",
                     click=self.ctrl.reset_camera,
                     title="Reset camera",
+                )
+                v3.VBtn(
+                    icon="mdi-dock-right",
+                    variant="text",
+                    click="right_panel_open = !right_panel_open",
+                    title="Toggle run details",
                 )
             with layout.drawer:
                 with v3.VContainer(classes="pa-5"):
@@ -639,9 +663,7 @@ class WarpDamBreakStudio:
                     )
             with layout.content:
                 html.Style(css)
-                with v3.VContainer(
-                    fluid=True, classes="pa-0 fill-height viewport-container"
-                ):
+                with html.Div(classes="studio-workspace"):
                     with html.Div(classes="viewport-wrap"):
                         html.Img(
                             src=("frame_image",),
@@ -688,18 +710,48 @@ class WarpDamBreakStudio:
                                 ),
                             )
                     with html.Div(
-                        style=(
-                            "position:absolute; right:20px; top:20px; width:220px; "
-                            "z-index:5; display:grid; gap:8px;"
-                        )
+                        classes="details-panel",
+                        v_show=("right_panel_open",),
                     ):
+                        with html.Div(
+                            classes="d-flex align-center justify-space-between mb-4"
+                        ):
+                            with html.Div():
+                                html.Div("SIMULATION", classes="eyebrow")
+                                html.H3("Run details", classes="text-h6")
+                            v3.VBtn(
+                                icon="mdi-chevron-right",
+                                variant="text",
+                                size="small",
+                                click="right_panel_open = false",
+                                title="Collapse details",
+                            )
+                        html.Div(
+                            "{{ device_name }}",
+                            classes="text-caption text-medium-emphasis mb-4",
+                        )
+                        html.Div("PARTICLES", classes="eyebrow mb-2")
                         for label, expression in (
+                            ("Fluid particles", "fluid_particles.toLocaleString()"),
                             ("Fine / coarse", "fine_particles + ' / ' + coarse_particles"),
                             ("Split / merged", "split_parents + ' / ' + merged_families"),
+                        ):
+                            with html.Div(classes="metric mb-2"):
+                                html.Div(label, classes="metric-label")
+                                html.Div(
+                                    f"{{{{ {expression} }}}}",
+                                    classes="metric-value",
+                                )
+                        html.Div("SOLVER", classes="eyebrow mt-5 mb-2")
+                        for label, expression in (
+                            ("State", "status.toUpperCase()"),
+                            ("Simulated time", "Number(sim_time).toExponential(3) + ' s'"),
+                            ("Last Δt", "dt_last ? Number(dt_last).toExponential(2) + ' s' : '—'"),
+                            ("Throughput", "steps_per_second ? Number(steps_per_second).toFixed(1) + ' step/s' : '—'"),
                             ("Mass drift", "Number(mass_drift).toExponential(2)"),
                             ("Peak pressure", "Number(p_max).toExponential(2) + ' Pa'"),
                         ):
-                            with html.Div(classes="metric"):
+                            with html.Div(classes="metric mb-2"):
                                 html.Div(label, classes="metric-label")
                                 html.Div(
                                     f"{{{{ {expression} }}}}",

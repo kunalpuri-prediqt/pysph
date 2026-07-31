@@ -114,6 +114,12 @@ The rendered particle viewport is:
 - Trame's default five-minute no-client timeout stopped the transient GCP
   service between browser refreshes. The app now starts with `timeout=0`; the
   deployment unit also uses systemd restart-on-failure semantics.
+- Browser acceptance then showed that Vuetify's `fill-height` container was
+  flex-centering a roughly 10-pixel VTK child. The content now uses an explicit
+  full-height CSS grid with center viewport and collapsible right details panel;
+  the existing left drawer remains collapsible. The oversized axes prop was
+  removed, the obstacle now matches the solver's 0.16 × 0.40 × 0.161 geometry,
+  and scalar-bar dimensions/fonts are capped relative to the viewport.
 - VTK emits a benign headless `DISPLAY=:0` warning before selecting EGL in the
   non-browser renderer.
 - Snapshot transport is intentionally lossy under browser backpressure; the
