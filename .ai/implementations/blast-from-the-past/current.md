@@ -50,3 +50,10 @@ orbit/pan/zoom and local/remote switching remain an acceptance check.
 `gcp-prediqt-rtx6000x1`, and run the app through a local SSH tunnel. A later
 Tier-2 plan should choose between device-resident adaptation and the
 literature/convergence checkpoint.
+
+**Deploy update (2026-07-31 PM):** viewport UI polish commit `7383ea47`
+(`prototype: polish Warp studio viewport UI`) is pushed and deployed. The VM is
+fast-forwarded, studio tests pass (`13 passed`), the service is active
+(`Restart=always`), and through the local tunnel HTTP is 302/200 with a `/ws`
+`101 Switching Protocols` upgrade. Remaining: hands-on browser acceptance after
+reloading `http://127.0.0.1:1234/`.
