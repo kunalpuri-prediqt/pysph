@@ -44,7 +44,9 @@ completes; scrubbing replays buffered frames and never rewinds the GPU solver.
 
 Fluid particles are rendered as instanced sphere glyphs whose radii follow each
 particle's smoothing length, so coarse and split particles remain visually
-distinct. Adaptive resolution is the default color field.
+distinct. Adaptive resolution is the default color field. A subtle grid floor
+and a wireframe outline of the real container (161/30 long, 0.5 wide, 1.5 tall)
+mark the tank so the flow and the fixed obstacle have spatial context.
 
 The Trame server disables its idle auto-shutdown so an SSH-forwarded deployment
 remains available between browser sessions.
