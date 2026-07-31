@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 import json
+import math
 import multiprocessing as mp
 from pathlib import Path
 from queue import Empty, Full
@@ -12,6 +13,12 @@ import traceback
 
 
 TERMINAL_STATES = {"completed", "cancelled", "failed"}
+
+_INSTABILITY_HINT = (
+    "Numerical instability: the simulation diverged (pressure/velocity became "
+    "non-finite). Try a lower CFL, a smaller dx, coarser adaptation, or fewer "
+    "steps."
+)
 
 
 def put_latest(queue, message):
@@ -107,7 +114,14 @@ def _worker_main(config, command_queue, result_queue, snapshot_stride):
                 continue
 
             tick = time.perf_counter()
-            simulation.step()
+            try:
+                progress = simulation.step()
+            except OverflowError as exc:
+                raise RuntimeError(_INSTABILITY_HINT) from exc
+            if progress is not None and not math.isfinite(
+                progress.get("dt", 0.0)
+            ):
+                raise RuntimeError(_INSTABILITY_HINT)
             step_seconds = time.perf_counter() - tick
             should_publish = (
                 simulation.step_count % max(int(snapshot_stride), 1) == 0
@@ -116,6 +130,8 @@ def _worker_main(config, command_queue, result_queue, snapshot_stride):
             )
             if should_publish:
                 metrics = simulation.metrics()
+                if not metrics.get("all_finite", True):
+                    raise RuntimeError(_INSTABILITY_HINT)
                 metrics["step_wall_seconds"] = step_seconds
                 metrics["steps_per_second"] = (
                     1.0 / step_seconds if step_seconds > 0 else None
