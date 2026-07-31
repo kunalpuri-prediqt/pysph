@@ -232,13 +232,18 @@ class ParticleScene:
         self.context_obstacle_source = cube
 
     def _fit_context_obstacle(self, points):
-        """Match the drawn obstacle box to the actual obstacle particles."""
-        lo = points.min(axis=0)
-        hi = points.max(axis=0)
+        """Draw a solid obstacle box centered on the obstacle particles.
+
+        At coarse dx the obstacle is only one particle layer thick, so the raw
+        point bounds collapse to a plane; use the nominal block size instead.
+        """
+        cx = 0.5 * (float(points[:, 0].min()) + float(points[:, 0].max()))
+        cy = 0.5 * (float(points[:, 1].min()) + float(points[:, 1].max()))
+        half_x, half_y, height = 0.08, 0.20, 0.161
         self.context_obstacle_source.SetBounds(
-            float(lo[0]), float(hi[0]),
-            float(lo[1]), float(hi[1]),
-            0.0, float(hi[2]),
+            cx - half_x, cx + half_x,
+            cy - half_y, cy + half_y,
+            0.0, height,
         )
 
     def _set_camera(self):
