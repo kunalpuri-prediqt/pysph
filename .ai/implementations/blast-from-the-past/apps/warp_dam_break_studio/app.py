@@ -99,7 +99,7 @@ class WarpDamBreakStudio:
             "fine_xmin": 1.75,
             "fine_xmax": 2.8,
             "fine_zmax": 0.65,
-            "scalar": "pressure",
+            "scalar": "resolution",
             "scalar_items": [
                 {"title": name.title(), "value": name}
                 for name in SCALARS
@@ -113,7 +113,7 @@ class WarpDamBreakStudio:
                 {"title": "Adaptive · two level", "value": "adaptive"},
                 {"title": "Uniform", "value": "uniform"},
             ],
-            "particle_scale": 0.045,
+            "particle_scale": 0.55,
             "wall_opacity": 0.20,
             "obstacle_visible": True,
             "right_panel_open": True,
@@ -423,6 +423,10 @@ class WarpDamBreakStudio:
             layout.toolbar["classes"] = "studio-toolbar"
             layout.drawer["classes"] = "studio-drawer"
             layout.content["classes"] = "studio-main"
+            layout.content["style"] = (
+                "height:100vh;max-height:100vh;overflow:hidden;"
+                "background:#07101f;"
+            )
             layout.drawer["width"] = 368
             layout.title.set_text("PySPH · Warp Studio")
             with layout.toolbar:
@@ -565,17 +569,17 @@ class WarpDamBreakStudio:
                         with v3.VExpansionPanel(title="Visualization"):
                             with v3.VExpansionPanelText():
                                 v3.VSelect(
-                                    v_model=("scalar", "pressure"),
+                                    v_model=("scalar", "resolution"),
                                     items=("scalar_items",),
                                     label="Color particles by",
                                     density="compact",
                                 )
                                 v3.VSlider(
-                                    v_model=("particle_scale", 0.045),
-                                    min=0.01,
-                                    max=0.12,
-                                    step=0.005,
-                                    label="Particle radius",
+                                    v_model=("particle_scale", 0.55),
+                                    min=0.2,
+                                    max=0.9,
+                                    step=0.05,
+                                    label="Particle size",
                                     thumb_label=True,
                                 )
                                 v3.VSlider(
@@ -663,13 +667,33 @@ class WarpDamBreakStudio:
                     )
             with layout.content:
                 html.Style(css)
-                with html.Div(classes="studio-workspace"):
-                    with html.Div(classes="viewport-wrap"):
+                with html.Div(
+                    classes="studio-workspace",
+                    style=(
+                        "position:relative;display:grid;"
+                        "grid-template-columns:minmax(0,1fr) auto;"
+                        "width:100%;height:calc(100vh - 64px);"
+                        "min-height:420px;overflow:hidden;"
+                    ),
+                ):
+                    with html.Div(
+                        classes="viewport-wrap",
+                        style=(
+                            "position:relative;width:100%;height:100%;"
+                            "min-width:0;min-height:0;overflow:hidden;"
+                            "background:#07101f;"
+                        ),
+                    ):
                         html.Img(
                             src=("frame_image",),
                             v_show=("frame_image.length > 0",),
                             classes="viewport-fallback",
                             alt="Rendered adaptive particle field",
+                            style=(
+                                "position:absolute;inset:0;width:100%;height:100%;"
+                                "object-fit:contain;z-index:2;pointer-events:none;"
+                                "background:#07101f;"
+                            ),
                         )
                         view = vtk.VtkRemoteView(
                             self.scene.render_window,
@@ -680,11 +704,24 @@ class WarpDamBreakStudio:
                             still_quality=95,
                             classes="viewport-remote",
                             EndAnimation=self._refresh_view,
+                            style=(
+                                "position:absolute;inset:0;width:100%;height:100%;"
+                                "z-index:1;background:transparent;"
+                            ),
                         )
                         self.ctrl.view_update = view.update
                         self.ctrl.view_resize = view.resize
                         self.ctrl.view_reset_camera = view.reset_camera
-                        with html.Div(classes="viewport-hud"):
+                        with html.Div(
+                            classes="viewport-hud",
+                            style=(
+                                "position:absolute;top:18px;left:18px;z-index:3;"
+                                "background:rgba(7,16,31,.72);"
+                                "border:1px solid rgba(140,180,230,.14);"
+                                "border-radius:16px;padding:12px 15px;"
+                                "pointer-events:none;"
+                            ),
+                        ):
                             html.Div("LIVE PARTICLE FIELD", classes="eyebrow")
                             html.Div(
                                 "{{ step.toLocaleString() }} / "
@@ -696,7 +733,15 @@ class WarpDamBreakStudio:
                                 "{{ fluid_particles.toLocaleString() }} fluid",
                                 classes="text-caption text-medium-emphasis",
                             )
-                        with html.Div(classes="timeline"):
+                        with html.Div(
+                            classes="timeline",
+                            style=(
+                                "position:absolute;left:24px;right:24px;bottom:18px;"
+                                "z-index:4;background:rgba(7,16,31,.84);"
+                                "border:1px solid rgba(140,180,230,.14);"
+                                "border-radius:16px;padding:4px 18px 0;"
+                            ),
+                        ):
                             v3.VSlider(
                                 v_model=("frame_index", 0),
                                 min=0,
@@ -712,6 +757,12 @@ class WarpDamBreakStudio:
                     with html.Div(
                         classes="details-panel",
                         v_show=("right_panel_open",),
+                        style=(
+                            "width:292px;height:100%;overflow-y:auto;padding:18px;"
+                            "background:rgba(12,24,44,.96);"
+                            "border-left:1px solid rgba(140,180,230,.14);"
+                            "box-shadow:-16px 0 36px rgba(0,0,0,.18);"
+                        ),
                     ):
                         with html.Div(
                             classes="d-flex align-center justify-space-between mb-4"

@@ -37,6 +37,10 @@ effect at the next complete solver-step boundary. The 3D camera remains
 interactive while paused, and the timeline can inspect buffered frames without
 altering GPU solver state.
 
+Fluid particles are rendered as instanced sphere glyphs whose radii follow each
+particle's smoothing length, so coarse and split particles remain visually
+distinct. Adaptive resolution is the default color field.
+
 The Trame server disables its idle auto-shutdown so an SSH-forwarded deployment
 remains available between browser sessions.
 

@@ -9,12 +9,13 @@ import numpy as np
 from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkFloatArray, vtkLookupTable, vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkPolyData
-from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkPlaneSource
+from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkPlaneSource, vtkSphereSource
 from vtkmodules.vtkIOImage import vtkJPEGWriter
 from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkColorTransferFunction,
+    vtkGlyph3DMapper,
     vtkPointGaussianMapper,
     vtkPolyDataMapper,
     vtkRenderer,
@@ -37,11 +38,22 @@ SCALARS = {
 
 class PointCloud:
     def __init__(self, color=(0.2, 0.6, 1.0), opacity=1.0,
-                 gaussian=True, scale_factor=0.035):
+                 gaussian=True, spheres=False, scale_factor=0.035):
         self.polydata = vtkPolyData()
         self.points = vtkPoints()
         self.polydata.SetPoints(self.points)
-        if gaussian:
+        if spheres:
+            self.source = vtkSphereSource()
+            self.source.SetRadius(0.5)
+            self.source.SetThetaResolution(10)
+            self.source.SetPhiResolution(8)
+            self.mapper = vtkGlyph3DMapper()
+            self.mapper.SetSourceConnection(self.source.GetOutputPort())
+            self.mapper.SetScaleArray("h")
+            self.mapper.SetScaleModeToScaleByMagnitude()
+            self.mapper.SetScaleFactor(scale_factor)
+            self.mapper.ScalingOn()
+        elif gaussian:
             self.mapper = vtkPointGaussianMapper()
             self.mapper.SetScaleFactor(scale_factor)
             self.mapper.EmissiveOff()
@@ -54,6 +66,10 @@ class PointCloud:
         self.actor.GetProperty().SetOpacity(opacity)
         self.actor.GetProperty().SetPointSize(3.0)
         self.arrays = {}
+
+    def set_scale_factor(self, value):
+        if hasattr(self.mapper, "SetScaleFactor"):
+            self.mapper.SetScaleFactor(float(value))
 
     def update(self, xyz, arrays=None):
         xyz = np.ascontiguousarray(xyz, dtype=np.float32)
@@ -97,7 +113,7 @@ class ParticleScene:
 
         self.fluid = PointCloud(
             color=(0.15, 0.62, 1.0), opacity=0.94,
-            gaussian=True, scale_factor=0.035,
+            gaussian=False, spheres=True, scale_factor=0.55,
         )
         self.wall = PointCloud(
             color=(0.55, 0.66, 0.82), opacity=0.20,
@@ -117,7 +133,7 @@ class ParticleScene:
         self.fluid.mapper.ScalarVisibilityOn()
         self.scalar_bar = vtkScalarBarActor()
         self.scalar_bar.SetLookupTable(self.lookup)
-        self.scalar_bar.SetTitle("Pressure")
+        self.scalar_bar.SetTitle("Resolution")
         self.scalar_bar.SetNumberOfLabels(4)
         self.scalar_bar.SetLabelFormat("%.2g")
         self.scalar_bar.SetPosition(0.86, 0.07)
@@ -131,7 +147,7 @@ class ParticleScene:
         self.scalar_bar.GetLabelTextProperty().SetColor(0.72, 0.82, 0.94)
         self.scalar_bar.GetLabelTextProperty().SetFontSize(12)
         self.renderer.AddViewProp(self.scalar_bar)
-        self.scalar = "pressure"
+        self.scalar = "resolution"
         self._add_context()
         self._set_camera()
 
@@ -234,8 +250,7 @@ class ParticleScene:
         self.render_window.Render()
 
     def set_particle_scale(self, value):
-        self.fluid.mapper.SetScaleFactor(float(value))
-        self.obstacle.mapper.SetScaleFactor(float(value) * 1.5)
+        self.fluid.set_scale_factor(value)
 
     def set_wall_opacity(self, value):
         self.wall.actor.GetProperty().SetOpacity(float(value))

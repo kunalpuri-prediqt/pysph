@@ -120,6 +120,11 @@ The rendered particle viewport is:
   the existing left drawer remains collapsible. The oversized axes prop was
   removed, the obstacle now matches the solver's 0.16 × 0.40 × 0.161 geometry,
   and scalar-bar dimensions/fonts are capped relative to the viewport.
+- The Gaussian splat renderer made the coarse `dx=0.1` particle lattice look
+  like a glowing solid block. Fluid now uses instanced sphere glyphs scaled by
+  each particle's `h`, with adaptive resolution as the default scalar. Critical
+  grid/overlay geometry is duplicated inline because browser acceptance showed
+  the class stylesheet was not consistently applied after Trame reconnects.
 - VTK emits a benign headless `DISPLAY=:0` warning before selecting EGL in the
   non-browser renderer.
 - Snapshot transport is intentionally lossy under browser backpressure; the

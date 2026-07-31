@@ -92,6 +92,7 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     position = camera.GetPosition()
     scene.update(_snapshot())
     assert scene.fluid.polydata.GetNumberOfPoints() == 2
+    assert scene.fluid.mapper.IsA("vtkGlyph3DMapper")
     assert scene.wall.polydata.GetNumberOfPoints() == 1
     assert scene.obstacle.polydata.GetNumberOfPoints() == 1
     assert camera.GetPosition() == position
@@ -130,3 +131,5 @@ def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
     assert 'class="viewport-wrap"' in markup
     assert 'class="details-panel"' in markup
     assert "viewport-container" not in markup
+    assert "position:relative;display:grid" in markup
+    assert "position:absolute;inset:0;width:100%;height:100%" in markup
