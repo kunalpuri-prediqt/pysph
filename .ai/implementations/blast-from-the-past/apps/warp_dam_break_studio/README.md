@@ -30,17 +30,39 @@ The app launches every simulation in a fresh spawned process. The interactive
 VTK viewport is rendered on the GPU server and streamed through Trame, avoiding
 browser-local serialization limits for Gaussian particle actors. A JPEG frame
 is also carried in application state as a visible fallback, and the latest NPZ
-is restored when the service restarts. The workspace has a collapsible control
-drawer, a dedicated full-height 3D center panel, and a collapsible run-details
-panel on the right. The viewport carries a floating control cluster with a
+is restored when the service restarts.
+
+The offscreen render window is resized from the browser through a
+`SizeObserver` bound to `viewport_size`, so the streamed frame matches the
+panel aspect instead of being letterboxed, and the camera reframes the tank
+for the current aspect on every resize.
+
+The stylesheet lives in `assets/studio.css` and is registered with
+`server.enable_module({"serve": ..., "styles": ...})`. It cannot be inlined
+with `html.Style(...)`: Vue's runtime template compiler discards `<style>`
+tags, so an inline block is silently dropped and only inline element styles
+survive.
+
+The workspace has a collapsible control drawer, a dedicated full-height 3D
+center panel, and a collapsible run-details panel on the right. The drawer is
+split into a scrolling section area (Run card plus Adaptive region, Physics and
+Visualization panels) and a pinned footer holding the status strip, the launch
+button, the pause/resume/step transport and cancel. The toolbar carries a brand
+lockup, a status pill that pulses while running, and a determinate progress bar
+driven by the current step. The run-details panel groups telemetry into
+Particles / Solver / Health tiles, with mass drift and peak pressure
+colour-coded from their own values.
+
+The viewport carries a floating control cluster with a
 reset-view button that restores the default camera and a toggle that hides or
 shows the color scale; when shown, the scale is a full-height vertical bar on
-the right edge labelled by the active field. The redundant live step/particle
-overlay was removed because the bottom timeline already reports progress. Pause
-takes effect at the next complete solver-step boundary. The 3D camera remains
-interactive while paused. The bottom timeline is a live progress indicator while
-a run is active and only becomes an interactive replay scrubber once the run
-completes; scrubbing replays buffered frames and never rewinds the GPU solver.
+the right edge labelled by the active field. An idle empty-state card explains
+that no run has started, and a busy pill appears while the CUDA worker starts.
+Pause takes effect at the next complete solver-step boundary. The 3D camera
+remains interactive while paused. The bottom timeline is a live progress
+indicator while a run is active and only becomes an interactive replay scrubber
+once the run completes; scrubbing replays buffered frames and never rewinds the
+GPU solver.
 
 Fluid particles are rendered as instanced sphere glyphs whose radii follow each
 particle's smoothing length, so coarse and split particles remain visually

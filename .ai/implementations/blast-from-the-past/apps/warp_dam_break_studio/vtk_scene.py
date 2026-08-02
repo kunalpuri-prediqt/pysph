@@ -42,6 +42,10 @@ SCALAR_TITLES = {
     "resolution": "Refinement",
 }
 
+# Real container extents (DamBreak3DGeometry, H = 1).
+TANK_X_LEN, TANK_Y_HALF, TANK_Z_TOP = 161.0 / 30.0, 0.25, 1.5
+TANK_BOUNDS = (0.0, TANK_X_LEN, -TANK_Y_HALF, TANK_Y_HALF, 0.0, TANK_Z_TOP)
+
 
 class PointCloud:
     def __init__(self, color=(0.2, 0.6, 1.0), opacity=1.0,
@@ -107,8 +111,8 @@ class ParticleScene:
 
     def __init__(self):
         self.renderer = vtkRenderer()
-        self.renderer.SetBackground(0.012, 0.020, 0.043)
-        self.renderer.SetBackground2(0.043, 0.086, 0.132)
+        self.renderer.SetBackground(0.008, 0.014, 0.033)
+        self.renderer.SetBackground2(0.035, 0.078, 0.126)
         self.renderer.GradientBackgroundOn()
         self.render_window = vtkRenderWindow()
         self.render_window.AddRenderer(self.renderer)
@@ -144,16 +148,16 @@ class ParticleScene:
         self.scalar_bar.SetNumberOfLabels(5)
         self.scalar_bar.SetLabelFormat("%.2g")
         self.scalar_bar.SetOrientationToVertical()
-        self.scalar_bar.SetPosition(0.918, 0.08)
-        self.scalar_bar.SetWidth(0.06)
-        self.scalar_bar.SetHeight(0.84)
-        self.scalar_bar.SetMaximumWidthInPixels(96)
+        self.scalar_bar.SetPosition(0.885, 0.10)
+        self.scalar_bar.SetWidth(0.055)
+        self.scalar_bar.SetHeight(0.78)
+        self.scalar_bar.SetMaximumWidthInPixels(88)
         self.scalar_bar.SetMaximumHeightInPixels(4000)
-        self.scalar_bar.SetBarRatio(0.26)
-        self.scalar_bar.SetTextPad(6)
+        self.scalar_bar.SetBarRatio(0.22)
+        self.scalar_bar.SetTextPad(7)
         self.scalar_bar.UnconstrainedFontSizeOn()
-        self.scalar_bar.GetTitleTextProperty().SetColor(0.90, 0.95, 1.0)
-        self.scalar_bar.GetTitleTextProperty().SetFontSize(15)
+        self.scalar_bar.GetTitleTextProperty().SetColor(0.93, 0.97, 1.0)
+        self.scalar_bar.GetTitleTextProperty().SetFontSize(14)
         self.scalar_bar.GetTitleTextProperty().SetBold(1)
         self.scalar_bar.GetTitleTextProperty().SetItalic(0)
         self.scalar_bar.GetLabelTextProperty().SetColor(0.76, 0.86, 0.98)
@@ -166,9 +170,7 @@ class ParticleScene:
         self._set_camera()
 
     def _add_context(self):
-        # Real container extents (DamBreak3DGeometry, H = 1): the tank is
-        # 161/30 long, 0.5 wide, 1.5 tall.
-        x_len, y_half, z_top = 161.0 / 30.0, 0.25, 1.5
+        x_len, y_half, z_top = TANK_X_LEN, TANK_Y_HALF, TANK_Z_TOP
 
         floor = vtkPlaneSource()
         floor.SetOrigin(0.0, -y_half, 0.0)
@@ -195,8 +197,8 @@ class ParticleScene:
         grid_actor = vtkActor()
         grid_actor.SetMapper(grid_mapper)
         grid_actor.GetProperty().SetRepresentationToWireframe()
-        grid_actor.GetProperty().SetColor(0.30, 0.46, 0.64)
-        grid_actor.GetProperty().SetOpacity(0.30)
+        grid_actor.GetProperty().SetColor(0.26, 0.42, 0.60)
+        grid_actor.GetProperty().SetOpacity(0.22)
         grid_actor.GetProperty().SetLineWidth(1.0)
         grid_actor.GetProperty().SetLighting(False)
         self.renderer.AddActor(grid_actor)
@@ -251,7 +253,10 @@ class ParticleScene:
         camera.SetPosition(5.0, -5.6, 3.2)
         camera.SetFocalPoint(2.5, 0.0, 0.55)
         camera.SetViewUp(0.0, 0.0, 1.0)
-        camera.SetClippingRange(0.1, 40.0)
+        # Fit the real tank for the current viewport aspect, keeping the
+        # view direction above; the window is resized by the browser client.
+        self.renderer.ResetCamera(*TANK_BOUNDS)
+        self.renderer.ResetCameraClippingRange()
 
     def reset_camera(self):
         self._set_camera()

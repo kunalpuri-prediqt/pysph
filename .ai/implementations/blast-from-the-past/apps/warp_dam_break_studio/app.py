@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from trame.app import get_server
 from trame.ui.vuetify3 import SinglePageWithDrawerLayout
-from trame.widgets import html, vtk, vuetify3 as v3
+from trame.widgets import client, html, vtk, vuetify3 as v3
 
 from vtk_scene import ParticleScene, SCALARS
 from worker import FrameBuffer, SolverWorker, TERMINAL_STATES
@@ -21,6 +21,8 @@ from worker import FrameBuffer, SolverWorker, TERMINAL_STATES
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = "/tmp/pysph-dam-break-studio.npz"
 SNAPSHOT_ARRAYS = ("xyz", "h", "rho", "p", "speed", "kind", "level")
+MIN_RENDER_SIZE = (320, 240)
+MAX_RENDER_SIZE = (2400, 1600)
 
 
 def validate_run_config(config, snapshot_stride):
@@ -153,6 +155,7 @@ class WarpDamBreakStudio:
         self.state.change("with_obstacle")(self._on_obstacle_visible)
         self.state.change("colorbar_visible")(self._on_colorbar_visible)
         self.state.change("frame_index")(self._on_frame_index)
+        self.state.change("viewport_size")(self._on_viewport_size)
 
     def _config(self):
         config = {
@@ -252,6 +255,27 @@ class WarpDamBreakStudio:
         self.scene.set_colorbar_visible(colorbar_visible)
         self._refresh_view()
 
+    def _on_viewport_size(self, viewport_size, **_):
+        """Match the offscreen render window to the browser panel.
+
+        Without this the server renders at a fixed aspect and the frame is
+        letterboxed inside the viewport.
+        """
+        if not viewport_size:
+            return
+        size = viewport_size.get("size") or {}
+        width = int(size.get("width") or 0)
+        height = int(size.get("height") or 0)
+        if width < MIN_RENDER_SIZE[0] or height < MIN_RENDER_SIZE[1]:
+            return
+        width = min(width, MAX_RENDER_SIZE[0])
+        height = min(height, MAX_RENDER_SIZE[1])
+        if tuple(self.scene.render_window.GetSize()) == (width, height):
+            return
+        self.scene.render_window.SetSize(width, height)
+        self.scene.reset_camera()
+        self._refresh_view()
+
     def _on_frame_index(self, frame_index, **_):
         if not len(self.frames):
             return
@@ -307,6 +331,8 @@ class WarpDamBreakStudio:
 
     def _on_server_ready(self, **_):
         self.ctrl.view_resize()
+        # The client viewport aspect is only known now, so reframe the tank.
+        self.scene.reset_camera()
         self.ctrl.view_update()
 
     def _handle_message(self, message):
@@ -364,80 +390,12 @@ class WarpDamBreakStudio:
         self.worker.close()
 
     def _build_ui(self):
-        css = """
-        :root {
-          --studio-bg: #060a15;
-          --studio-panel: rgba(14, 24, 46, .90);
-          --studio-line: rgba(126, 174, 232, .16);
-          --studio-cyan: #38e1e0;
-          --studio-orange: #ff7a5c;
-          --studio-violet: #8b7bffcc;
-        }
-        html, body, #app { background: var(--studio-bg); overflow: hidden; }
-        .studio-shell { background:
-          radial-gradient(circle at 78% -8%, rgba(56, 197, 214, .20), transparent 44%),
-          radial-gradient(circle at 4% 112%, rgba(126, 108, 224, .18), transparent 48%),
-          linear-gradient(160deg, #070c1a 0%, #060a15 60%, #050811 100%); }
-        .studio-toolbar {
-          backdrop-filter: blur(20px);
-          border-bottom: 1px solid var(--studio-line) !important;
-          background: linear-gradient(180deg, rgba(11, 21, 40, .90),
-            rgba(7, 13, 27, .78)) !important;
-        }
-        .studio-drawer {
-          background: linear-gradient(185deg, rgba(14, 26, 49, .94),
-            rgba(9, 17, 34, .94)) !important;
-          border-right: 1px solid var(--studio-line) !important;
-        }
-        .eyebrow { color: #6fe6ea; letter-spacing: .18em; font-size: .68rem;
-          text-transform: uppercase; font-weight: 700; }
-        .metric { border: 1px solid var(--studio-line); background:
-          linear-gradient(145deg, rgba(30, 56, 92, .55), rgba(11, 22, 42, .70));
-          border-radius: 14px; padding: 10px 12px; min-height: 68px;
-          transition: transform .18s ease, border-color .18s ease,
-            box-shadow .18s ease; }
-        .metric:hover { transform: translateY(-2px);
-          border-color: rgba(56, 225, 224, .38);
-          box-shadow: 0 10px 26px rgba(4, 10, 22, .45),
-            0 0 0 1px rgba(56, 225, 224, .10) inset; }
-        .metric-label { color: #90a8c8; font-size: .68rem; text-transform:
-          uppercase; letter-spacing: .08em; }
-        .metric-value { color: #f4f8ff; font-size: 1.15rem; font-weight: 650; }
-        .studio-main { height: 100vh !important; max-height: 100vh !important;
-          overflow: hidden; background: var(--studio-bg); }
-        .studio-workspace { position: relative; display: grid;
-          grid-template-columns: minmax(0, 1fr) auto; width: 100%; height:
-          calc(100vh - 64px); min-height: 420px; overflow: hidden; }
-        .viewport-wrap { position: relative; width: 100%; height: 100%;
-          min-width: 0; min-height: 0; overflow: hidden; background: var(--studio-bg); }
-        .viewport-fallback { position: absolute; inset: 0; width: 100%;
-          height: 100%; object-fit: contain; z-index: 2; pointer-events: none;
-          background: var(--studio-bg); }
-        .viewport-remote { position: absolute !important; inset: 0; width: 100%;
-          height: 100%; z-index: 1; background: transparent !important; }
-        .viewport-controls { position: absolute; top: 16px; right: 16px;
-          z-index: 5; display: flex; align-items: center; gap: 8px;
-          padding: 7px 8px;
-          background: rgba(10, 19, 37, .78); border: 1px solid var(--studio-line);
-          backdrop-filter: blur(16px); border-radius: 14px;
-          box-shadow: 0 8px 24px rgba(3, 8, 18, .45); }
-        .viewport-btn { letter-spacing: .02em; }
-        .timeline { position: absolute; left: 24px; right: 24px; bottom: 18px;
-          z-index: 4; background: rgba(9, 17, 34, .82);
-          border: 1px solid var(--studio-line); backdrop-filter: blur(16px);
-          border-radius: 16px; padding: 6px 18px 2px;
-          box-shadow: 0 10px 30px rgba(3, 8, 18, .38); }
-        .timeline-label { color: #8fbfe0; font-size: .64rem; font-weight: 700;
-          letter-spacing: .14em; text-transform: uppercase; padding-left: 34px;
-          margin-bottom: -2px; }
-        .details-panel { width: 292px; height: 100%; overflow-y: auto;
-          padding: 18px; background: var(--studio-panel); border-left: 1px solid
-          var(--studio-line); box-shadow: -16px 0 36px rgba(0, 0, 0, .22); }
-        .details-grid { display: grid; gap: 10px; }
-        @media (max-width: 1050px) {
-          .details-panel { position: absolute; top: 0; right: 0; z-index: 8; }
-        }
-        """
+        # Vue's runtime template compiler drops inline <style> tags, so the
+        # stylesheet has to be served and registered as a client module.
+        self.server.enable_module({
+            "serve": {"studio_assets": str(APP_DIR / "assets")},
+            "styles": ["studio_assets/studio.css"],
+        })
         with SinglePageWithDrawerLayout(
             self.server, full_height=True, theme="dark"
         ) as layout:
@@ -450,20 +408,32 @@ class WarpDamBreakStudio:
                 "height:100vh;max-height:100vh;overflow:hidden;"
                 "background:#060a15;"
             )
-            layout.drawer["width"] = 368
-            layout.title.set_text("PySPH · Warp Studio")
+            layout.drawer["width"] = 372
+            layout.title.set_text("")
+            # The built-in toolbar title is a flex-grow slot; leaving it in
+            # place pushes the brand lockup to the centre of the bar.
+            layout.title["classes"] = "d-none"
             with layout.toolbar:
+                with html.Div(classes="brand"):
+                    html.Div("SPH", classes="brand-mark")
+                    with html.Div():
+                        html.Div("PySPH · Warp Studio", classes="brand-name")
+                        html.Div("Warp · CUDA", classes="brand-sub")
                 v3.VSpacer()
                 v3.VChip(
                     text=("status.toUpperCase()",),
                     color=(
                         "status === 'running' ? 'cyan' : "
+                        "status === 'paused' ? 'amber' : "
                         "status === 'failed' ? 'error' : "
                         "status === 'completed' ? 'success' : 'blue-grey'"
                     ),
                     variant="tonal",
                     size="small",
-                    classes="mr-3",
+                    classes=(
+                        "status === 'running' ? "
+                        "'status-pill is-running mr-3' : 'status-pill mr-3'"
+                    ),
                 )
                 v3.VBtn(
                     icon="mdi-crosshairs-gps",
@@ -477,8 +447,18 @@ class WarpDamBreakStudio:
                     click="right_panel_open = !right_panel_open",
                     title="Toggle run details",
                 )
+                v3.VProgressLinear(
+                    model_value=(
+                        "step_total ? "
+                        "Math.min(100, (step / step_total) * 100) : 0",
+                    ),
+                    color="cyan",
+                    height=2,
+                    classes="toolbar-progress",
+                    v_show=("run_active",),
+                )
             with layout.drawer:
-                with v3.VContainer(classes="pa-5"):
+                with html.Div(classes="drawer-scroll"):
                     html.Div("GPU SIMULATION", classes="eyebrow mb-1")
                     html.H2("Dam-break controls", classes="text-h5 mb-1")
                     html.P(
@@ -486,41 +466,66 @@ class WarpDamBreakStudio:
                         "without leaving the browser.",
                         classes="text-body-2 text-medium-emphasis mb-5",
                     )
-                    v3.VSelect(
-                        v_model=("resolution_mode", "adaptive"),
-                        items=("mode_items",),
-                        label="Resolution mode",
-                        variant="outlined",
-                        density="compact",
-                        disabled=("run_active",),
-                    )
-                    with v3.VRow(dense=True):
-                        with v3.VCol(cols=6):
-                            v3.VTextField(
-                                v_model=("dx", 0.1),
-                                label="Spacing dx",
-                                type="number",
-                                step=0.01,
-                                variant="outlined",
-                                density="compact",
-                                disabled=("run_active",),
+                    with html.Div(classes="card"):
+                        with html.Div(classes="card-head"):
+                            v3.VIcon("mdi-tune-variant", size="16")
+                            html.Span("Run")
+                        with v3.VBtnToggle(
+                            v_model=("resolution_mode", "adaptive"),
+                            mandatory=True,
+                            divided=True,
+                            density="comfortable",
+                            color="cyan",
+                            classes="segmented mb-4",
+                            disabled=("run_active",),
+                        ):
+                            v3.VBtn(
+                                v_for="item in mode_items",
+                                key="item.value",
+                                value=("item.value",),
+                                text=("item.title",),
                             )
-                        with v3.VCol(cols=6):
-                            v3.VTextField(
-                                v_model=("steps", 250),
-                                label="Steps",
-                                type="number",
-                                variant="outlined",
-                                density="compact",
-                                disabled=("run_active",),
-                            )
-                    with v3.VExpansionPanels(variant="accordion", classes="mb-4"):
+                        with v3.VRow(dense=True):
+                            with v3.VCol(cols=6):
+                                v3.VTextField(
+                                    v_model=("dx", 0.1),
+                                    label="Spacing dx",
+                                    type="number",
+                                    step=0.01,
+                                    variant="outlined",
+                                    density="compact",
+                                    prepend_inner_icon="mdi-dots-grid",
+                                    disabled=("run_active",),
+                                )
+                            with v3.VCol(cols=6):
+                                v3.VTextField(
+                                    v_model=("steps", 250),
+                                    label="Steps",
+                                    type="number",
+                                    variant="outlined",
+                                    density="compact",
+                                    prepend_inner_icon="mdi-step-forward",
+                                    disabled=("run_active",),
+                                )
+                        v3.VSwitch(
+                            v_model=("with_obstacle", True),
+                            label="Fixed obstacle",
+                            color="deep-orange",
+                            disabled=("run_active",),
+                            density="compact",
+                            hide_details=True,
+                            classes="mb-2",
+                        )
+                    with v3.VExpansionPanels(
+                        variant="accordion", classes="mb-4", flat=True
+                    ):
                         with v3.VExpansionPanel(title="Adaptive region"):
                             with v3.VExpansionPanelText():
                                 v3.VTextField(
                                     v_model=("adapt_every", 10),
                                     label="Adapt every N steps",
                                     type="number",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
@@ -528,6 +533,7 @@ class WarpDamBreakStudio:
                                     v_model=("max_splits", 128),
                                     label="Max splits / checkpoint",
                                     type="number",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
@@ -535,6 +541,7 @@ class WarpDamBreakStudio:
                                     v_model=("snapshot_stride", 5),
                                     label="Visualize every N steps",
                                     type="number",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
@@ -544,6 +551,7 @@ class WarpDamBreakStudio:
                                             v_model=("fine_xmin", 1.9),
                                             label="Fine x min",
                                             type="number",
+                                            variant="outlined",
                                             density="compact",
                                             disabled=("run_active",),
                                         )
@@ -552,6 +560,7 @@ class WarpDamBreakStudio:
                                             v_model=("fine_xmax", 3.5),
                                             label="Fine x max",
                                             type="number",
+                                            variant="outlined",
                                             density="compact",
                                             disabled=("run_active",),
                                         )
@@ -559,6 +568,7 @@ class WarpDamBreakStudio:
                                     v_model=("fine_zmax", 0.65),
                                     label="Fine-region height",
                                     type="number",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
@@ -568,6 +578,7 @@ class WarpDamBreakStudio:
                                     v_model=("kernel", "wendland"),
                                     items=("kernel_items",),
                                     label="SPH kernel",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
@@ -577,6 +588,7 @@ class WarpDamBreakStudio:
                                     max=1,
                                     step=0.05,
                                     label="Viscosity α",
+                                    color="cyan",
                                     thumb_label=True,
                                     disabled=("run_active",),
                                 )
@@ -586,6 +598,7 @@ class WarpDamBreakStudio:
                                     max=1,
                                     step=0.05,
                                     label="XSPH ε",
+                                    color="cyan",
                                     thumb_label=True,
                                     disabled=("run_active",),
                                 )
@@ -595,6 +608,7 @@ class WarpDamBreakStudio:
                                     v_model=("scalar", "resolution"),
                                     items=("scalar_items",),
                                     label="Color particles by",
+                                    variant="outlined",
                                     density="compact",
                                 )
                                 v3.VSlider(
@@ -603,6 +617,7 @@ class WarpDamBreakStudio:
                                     max=0.9,
                                     step=0.05,
                                     label="Particle size",
+                                    color="cyan",
                                     thumb_label=True,
                                 )
                                 v3.VSlider(
@@ -611,6 +626,7 @@ class WarpDamBreakStudio:
                                     max=1,
                                     step=0.05,
                                     label="Wall opacity",
+                                    color="cyan",
                                     thumb_label=True,
                                 )
                                 v3.VChip(
@@ -618,78 +634,75 @@ class WarpDamBreakStudio:
                                     prepend_icon="mdi-server",
                                     color="cyan",
                                     variant="tonal",
+                                    size="small",
                                     classes="mb-3",
                                 )
                                 v3.VTextField(
                                     v_model=("output_path", DEFAULT_OUTPUT),
                                     label="Result NPZ",
+                                    variant="outlined",
                                     density="compact",
                                     disabled=("run_active",),
                                 )
-                    v3.VSwitch(
-                        v_model=("with_obstacle", True),
-                        label="Fixed obstacle",
-                        color="deep-orange",
+                with html.Div(classes="drawer-footer"):
+                    with html.Div(classes="status-strip mb-3"):
+                        html.Span(classes=("'status-dot status-' + status",))
+                        html.Div(
+                            "{{ status_detail }}", classes="status-text"
+                        )
+                    v3.VBtn(
+                        text="Launch GPU run",
+                        prepend_icon="mdi-rocket-launch",
+                        block=True,
+                        size="large",
+                        classes="launch-btn",
+                        click=self.ctrl.start_run,
                         disabled=("run_active",),
-                        density="compact",
                     )
-                    with v3.VRow(dense=True, classes="mt-2"):
-                        with v3.VCol(cols=12):
-                            v3.VBtn(
-                                text="Launch GPU run",
-                                prepend_icon="mdi-rocket-launch",
-                                color="cyan",
-                                block=True,
-                                size="large",
-                                click=self.ctrl.start_run,
-                                disabled=("run_active",),
-                            )
-                    with v3.VRow(dense=True):
-                        with v3.VCol(cols=4):
-                            v3.VBtn(
-                                text="Pause",
-                                block=True,
-                                variant="tonal",
-                                click=self.ctrl.pause_run,
-                                disabled=("!run_active || paused",),
-                            )
-                        with v3.VCol(cols=4):
-                            v3.VBtn(
-                                text="Resume",
-                                block=True,
-                                variant="tonal",
-                                click=self.ctrl.resume_run,
-                                disabled=("!run_active || !paused",),
-                            )
-                        with v3.VCol(cols=4):
-                            v3.VBtn(
-                                text="Step",
-                                block=True,
-                                variant="tonal",
-                                click=self.ctrl.single_step,
-                                disabled=("!run_active || !paused",),
-                            )
+                    with html.Div(classes="transport mt-3"):
+                        v3.VBtn(
+                            text="Pause",
+                            prepend_icon="mdi-pause",
+                            variant="tonal",
+                            size="small",
+                            click=self.ctrl.pause_run,
+                            disabled=("!run_active || paused",),
+                        )
+                        v3.VBtn(
+                            text="Resume",
+                            prepend_icon="mdi-play",
+                            variant="tonal",
+                            size="small",
+                            click=self.ctrl.resume_run,
+                            disabled=("!run_active || !paused",),
+                        )
+                        v3.VBtn(
+                            text="Step",
+                            prepend_icon="mdi-debug-step-over",
+                            variant="tonal",
+                            size="small",
+                            click=self.ctrl.single_step,
+                            disabled=("!run_active || !paused",),
+                        )
                     v3.VBtn(
                         text="Cancel run",
                         block=True,
                         variant="text",
+                        size="small",
                         color="error",
+                        classes="mt-2",
                         click=self.ctrl.cancel_run,
                         disabled=("!run_active",),
-                    )
-                    html.Div(
-                        "{{ status_detail }}",
-                        classes="text-caption text-medium-emphasis mt-3",
                     )
                     v3.VAlert(
                         text=("error_text",),
                         type="error",
                         variant="tonal",
+                        density="compact",
                         classes="mt-3",
                         v_show=("error_text.length > 0",),
                     )
             with layout.content:
-                html.Style(css)
                 with html.Div(
                     classes="studio-workspace",
                     style=(
@@ -735,6 +748,9 @@ class WarpDamBreakStudio:
                         self.ctrl.view_update = view.update
                         self.ctrl.view_resize = view.resize
                         self.ctrl.view_reset_camera = view.reset_camera
+                        client.SizeObserver(
+                            "viewport_size", classes="viewport-sizer"
+                        )
                         with html.Div(classes="viewport-controls"):
                             v3.VBtn(
                                 "Reset view",
@@ -755,6 +771,36 @@ class WarpDamBreakStudio:
                                 click="colorbar_visible = !colorbar_visible",
                                 title="Show or hide the color scale",
                             )
+                        with html.Div(
+                            classes="viewport-busy",
+                            v_show=("status === 'initializing'",),
+                        ):
+                            v3.VProgressCircular(
+                                indeterminate=True,
+                                size=18,
+                                width=2,
+                                color="cyan",
+                            )
+                            html.Span(
+                                "{{ status_detail || 'Starting CUDA worker' }}"
+                            )
+                        with html.Div(
+                            classes="viewport-empty",
+                            v_show=("frame_image.length === 0 && !run_active",),
+                        ):
+                            with html.Div(classes="empty-card"):
+                                v3.VIcon(
+                                    "mdi-waves", size="42", color="#4fb9d8"
+                                )
+                                html.Div(
+                                    "No particles yet", classes="empty-title"
+                                )
+                                html.P(
+                                    "The tank, floor grid and obstacle are "
+                                    "drawn for context. Press Launch GPU run "
+                                    "to fill the tank with fluid particles.",
+                                    classes="empty-body",
+                                )
                         with html.Div(
                             classes="timeline",
                             style=(
@@ -787,14 +833,14 @@ class WarpDamBreakStudio:
                         classes="details-panel",
                         v_show=("right_panel_open",),
                         style=(
-                            "width:292px;height:100%;overflow-y:auto;padding:18px;"
+                            "width:300px;height:100%;overflow-y:auto;padding:18px;"
                             "background:rgba(12,24,44,.96);"
                             "border-left:1px solid rgba(140,180,230,.14);"
                             "box-shadow:-16px 0 36px rgba(0,0,0,.18);"
                         ),
                     ):
                         with html.Div(
-                            classes="d-flex align-center justify-space-between mb-4"
+                            classes="d-flex align-center justify-space-between mb-3"
                         ):
                             with html.Div():
                                 html.Div("SIMULATION", classes="eyebrow")
@@ -806,39 +852,89 @@ class WarpDamBreakStudio:
                                 click="right_panel_open = false",
                                 title="Collapse details",
                             )
-                        html.Div(
-                            "{{ device_name }}",
-                            classes="text-caption text-medium-emphasis mb-4",
-                        )
+                        with html.Div(classes="status-strip mb-4"):
+                            v3.VIcon("mdi-expansion-card-variant", size="15")
+                            html.Div(
+                                "{{ device_name }}", classes="status-text"
+                            )
                         html.Div("PARTICLES", classes="eyebrow mb-2")
-                        for label, expression in (
-                            ("Fluid particles", "fluid_particles.toLocaleString()"),
-                            ("Fine / coarse", "fine_particles + ' / ' + coarse_particles"),
-                            ("Split / merged", "split_parents + ' / ' + merged_families"),
-                        ):
-                            with html.Div(classes="metric mb-2"):
-                                html.Div(label, classes="metric-label")
-                                html.Div(
-                                    f"{{{{ {expression} }}}}",
-                                    classes="metric-value",
-                                )
-                        html.Div("SOLVER", classes="eyebrow mt-5 mb-2")
-                        for label, expression in (
-                            ("State", "status.toUpperCase()"),
-                            ("Simulated time", "Number(sim_time).toExponential(3) + ' s'"),
-                            ("Last Δt", "dt_last ? Number(dt_last).toExponential(2) + ' s' : '—'"),
-                            ("Throughput", "steps_per_second ? Number(steps_per_second).toFixed(1) + ' step/s' : '—'"),
-                            ("Mass drift", "Number(mass_drift).toExponential(2)"),
-                            ("Peak pressure", "Number(p_max).toExponential(2) + ' Pa'"),
-                        ):
-                            with html.Div(classes="metric mb-2"):
-                                html.Div(label, classes="metric-label")
-                                html.Div(
-                                    f"{{{{ {expression} }}}}",
-                                    classes="metric-value",
-                                )
+                        with html.Div(classes="details-grid"):
+                            self._metric(
+                                "Fluid", "mdi-water",
+                                "fluid_particles.toLocaleString()",
+                            )
+                            self._metric(
+                                "Step", "mdi-step-forward",
+                                "step.toLocaleString() + ' / ' + "
+                                "step_total.toLocaleString()",
+                            )
+                            self._metric(
+                                "Fine / coarse", "mdi-grid",
+                                "fine_particles.toLocaleString() + ' / ' + "
+                                "coarse_particles.toLocaleString()",
+                                span=True,
+                            )
+                            self._metric(
+                                "Split / merged", "mdi-call-split",
+                                "split_parents.toLocaleString() + ' / ' + "
+                                "merged_families.toLocaleString()",
+                                span=True,
+                            )
+                        html.Div(classes="details-rule")
+                        html.Div("SOLVER", classes="eyebrow mb-2")
+                        with html.Div(classes="details-grid"):
+                            self._metric(
+                                "State", "mdi-pulse", "status.toUpperCase()",
+                            )
+                            self._metric(
+                                "Throughput", "mdi-speedometer",
+                                "steps_per_second ? "
+                                "Number(steps_per_second).toFixed(1) + ' step/s'"
+                                " : '—'",
+                            )
+                            self._metric(
+                                "Sim. time", "mdi-clock-outline",
+                                "Number(sim_time).toExponential(3) + ' s'",
+                            )
+                            self._metric(
+                                "Last Δt", "mdi-timer-sand",
+                                "dt_last ? "
+                                "Number(dt_last).toExponential(2) + ' s' : '—'",
+                            )
+                        html.Div(classes="details-rule")
+                        html.Div("HEALTH", classes="eyebrow mb-2")
+                        with html.Div(classes="details-grid"):
+                            self._metric(
+                                "Mass drift", "mdi-scale-balance",
+                                "Number(mass_drift).toExponential(2)",
+                                tone="Math.abs(Number(mass_drift)) > 1e-4 ? "
+                                     "'bad' : Math.abs(Number(mass_drift)) > "
+                                     "1e-9 ? 'warn' : 'ok'",
+                            )
+                            self._metric(
+                                "Peak pressure", "mdi-gauge",
+                                "Number(p_max).toExponential(2) + ' Pa'",
+                                tone="Number(p_max) > 1e8 ? 'bad' : "
+                                     "Number(p_max) > 1e6 ? 'warn' : 'ok'",
+                            )
             layout.footer.hide()
         self.ui = layout
+
+    @staticmethod
+    def _metric(label, icon, expression, span=False, tone=None):
+        """One telemetry tile; `tone` is a JS expression returning a health class."""
+        classes = "metric span-2" if span else "metric"
+        with html.Div(classes=classes):
+            with html.Div(classes="metric-label"):
+                v3.VIcon(icon, size="13")
+                html.Span(label)
+            html.Div(
+                f"{{{{ {expression} }}}}",
+                classes=(
+                    (f"'metric-value num ' + ({tone})",) if tone
+                    else "metric-value num"
+                ),
+            )
 
 
 def parse_args():

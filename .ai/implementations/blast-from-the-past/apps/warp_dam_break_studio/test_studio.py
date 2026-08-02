@@ -145,3 +145,44 @@ def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
     assert "viewport-container" not in markup
     assert "position:relative;display:grid" in markup
     assert "position:absolute;inset:0;width:100%;height:100%" in markup
+
+
+def test_studio_has_refreshed_chrome(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.DEFAULT_OUTPUT", str(tmp_path / "missing.npz"))
+    server = get_server("studio-chrome-test", client_type="vue3")
+    studio = WarpDamBreakStudio(server=server)
+    markup = studio.ui.html
+    assert 'class="brand"' in markup
+    assert "toolbar-progress" in markup
+    assert 'class="drawer-scroll"' in markup
+    assert 'class="drawer-footer"' in markup
+    assert "launch-btn" in markup
+    assert 'class="transport mt-3"' in markup
+    assert "status-dot status-" in markup
+    assert 'class="viewport-empty"' in markup
+    assert 'class="viewport-busy"' in markup
+    assert 'class="details-grid"' in markup
+    assert "metric span-2" in markup
+    assert "metric-value num" in markup
+    assert "details-rule" in markup
+
+
+def test_studio_states_used_by_new_chrome_are_present(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.DEFAULT_OUTPUT", str(tmp_path / "missing.npz"))
+    server = get_server("studio-state-test", client_type="vue3")
+    studio = WarpDamBreakStudio(server=server)
+    for key in ("step", "step_total", "status", "status_detail", "run_active",
+                "frame_image", "mode_items", "resolution_mode", "viewport_size"):
+        assert studio.state.has(key)
+
+
+def test_viewport_size_resizes_render_window(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.DEFAULT_OUTPUT", str(tmp_path / "missing.npz"))
+    server = get_server("studio-resize-test", client_type="vue3")
+    studio = WarpDamBreakStudio(server=server)
+    studio._on_viewport_size({"size": {"width": 900, "height": 700}})
+    assert tuple(studio.scene.render_window.GetSize()) == (900, 700)
+    studio._on_viewport_size({"size": {"width": 10, "height": 10}})
+    assert tuple(studio.scene.render_window.GetSize()) == (900, 700)
+    studio._on_viewport_size(None)
+    assert tuple(studio.scene.render_window.GetSize()) == (900, 700)
