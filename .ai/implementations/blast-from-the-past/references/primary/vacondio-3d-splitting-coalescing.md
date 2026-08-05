@@ -50,6 +50,17 @@ not only minimum error.
   density-error minimization.
 - Pairwise conservative coalescence: mass-weighted position/velocity and a
   smoothing length selected to minimize density error.
+- The paper's unequal-mass/unequal-smoothing-length simulations use a
+  variationally consistent WCSPH formulation. In PySPH notation the associated
+  variable-`h` pair mapping is destination `DWI = grad W(r_ij, h_i)` and source
+  `DWJ = grad W(r_ij, h_j)`, not the averaged `DWIJ` gradient. The adaptive
+  continuity/partition terms use `DWI`; pressure momentum uses the sum of the
+  destination pressure coefficient times `DWI` and the source pressure
+  coefficient times `DWJ`.
+
+Warp's generated snippets store a scalar radial factor and multiply it by
+`XIJ`, whereas PySPH's `DWI`/`DWJ` are vectors. ADR-0011 therefore maps them to
+two scalar factors evaluated at `h_i` and `h_j` without changing vector signs.
 
 ## Questions raised
 

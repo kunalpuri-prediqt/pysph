@@ -132,7 +132,7 @@ class ParticleScene:
         )
         self.obstacle = PointCloud(
             color=(1.0, 0.45, 0.12), opacity=0.96,
-            gaussian=True, scale_factor=0.07,
+            gaussian=False, spheres=True, scale_factor=0.48,
         )
         for cloud in (self.wall, self.fluid, self.obstacle):
             self.renderer.AddActor(cloud.actor)
@@ -165,7 +165,9 @@ class ParticleScene:
         self.scalar_bar.GetLabelTextProperty().SetBold(0)
         self.scalar_bar.GetLabelTextProperty().SetItalic(0)
         self.renderer.AddViewProp(self.scalar_bar)
-        self.scalar = "resolution"
+        self.scalar = "pressure"
+        self.obstacle_mode = "fixed"
+        self.obstacle_visible = True
         self._add_context()
         self._set_camera()
 
@@ -287,6 +289,17 @@ class ParticleScene:
         if array_name == "level":
             self.lookup.AddRGBPoint(0.0, 0.10, 0.52, 0.92)
             self.lookup.AddRGBPoint(1.0, 0.98, 0.28, 0.20)
+        elif array_name == "p":
+            amplitude = max(abs(float(lo)), abs(float(hi)), 1.0)
+            lo, hi = -amplitude, amplitude
+            self.lookup.AddRGBPoint(lo, 0.08, 0.30, 0.88)
+            self.lookup.AddRGBPoint(0.0, 0.20, 0.86, 0.90)
+            self.lookup.AddRGBPoint(hi, 1.0, 0.25, 0.10)
+        elif array_name == "speed":
+            lo, hi = 0.0, max(float(hi), 1.0e-6)
+            self.lookup.AddRGBPoint(lo, 0.06, 0.20, 0.62)
+            self.lookup.AddRGBPoint(0.5 * hi, 0.10, 0.82, 0.92)
+            self.lookup.AddRGBPoint(hi, 1.0, 0.68, 0.08)
         else:
             mid = 0.5 * (lo + hi)
             self.lookup.AddRGBPoint(lo, 0.08, 0.28, 0.72)
@@ -296,6 +309,7 @@ class ParticleScene:
         self.lookup.Build()
 
     def update(self, snapshot):
+        self.set_obstacle_mode(snapshot.get("obstacle_mode", "fixed"))
         kind = np.asarray(snapshot["kind"])
         xyz = np.asarray(snapshot["xyz"])
         arrays = {
@@ -313,11 +327,12 @@ class ParticleScene:
             {name: value[fluid_mask] for name, value in arrays.items()},
         )
         self.wall.update(xyz[wall_mask])
-        self.obstacle.update(xyz[obstacle_mask])
-        self.obstacle.actor.SetVisibility(False)
-        if np.any(obstacle_mask):
+        self.obstacle.update(
+            xyz[obstacle_mask], {"h": arrays["h"][obstacle_mask]}
+        )
+        if self.obstacle_mode == "fixed" and np.any(obstacle_mask):
             self._fit_context_obstacle(xyz[obstacle_mask])
-        self.context_obstacle.SetVisibility(bool(np.any(obstacle_mask)))
+        self._apply_obstacle_visibility(bool(np.any(obstacle_mask)))
         self.set_scalar(self.scalar)
         self.renderer.ResetCameraClippingRange()
         self.render_window.Render()
@@ -329,8 +344,23 @@ class ParticleScene:
         self.wall.actor.GetProperty().SetOpacity(float(value))
 
     def set_obstacle_visible(self, visible):
-        self.obstacle.actor.SetVisibility(False)
-        self.context_obstacle.SetVisibility(bool(visible))
+        self.obstacle_visible = bool(visible)
+        has_points = self.obstacle.polydata.GetNumberOfPoints() > 0
+        self._apply_obstacle_visibility(has_points)
+
+    def set_obstacle_mode(self, mode):
+        if mode not in {"none", "fixed", "floating"}:
+            raise ValueError(f"unknown obstacle mode {mode!r}")
+        self.obstacle_mode = mode
+
+    def _apply_obstacle_visibility(self, has_points):
+        visible = self.obstacle_visible and bool(has_points)
+        self.obstacle.actor.SetVisibility(
+            visible and self.obstacle_mode == "floating"
+        )
+        self.context_obstacle.SetVisibility(
+            visible and self.obstacle_mode == "fixed"
+        )
 
     def jpeg_data_uri(self, quality=82):
         """Capture the current render as a browser-safe fallback image."""

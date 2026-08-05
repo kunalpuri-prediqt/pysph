@@ -69,6 +69,86 @@
       "from": "ADR-0007",
       "to": "ADR-0004",
       "type": "depends_on"
+    },
+    {
+      "from": "ADR-0008",
+      "to": "ADR-0005",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0008",
+      "to": "ADR-0006",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0008",
+      "to": "ADR-0007",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0008",
+      "to": "ADR-0006",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0009",
+      "to": "ADR-0005",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0009",
+      "to": "ADR-0007",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0009",
+      "to": "ADR-0008",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0009",
+      "to": "ADR-0007",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0010",
+      "to": "ADR-0006",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0010",
+      "to": "ADR-0008",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0010",
+      "to": "ADR-0006",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0011",
+      "to": "ADR-0003",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0011",
+      "to": "ADR-0006",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0011",
+      "to": "ADR-0009",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0011",
+      "to": "ADR-0003",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0011",
+      "to": "ADR-0006",
+      "type": "depends_on"
     }
   ],
   "nodes": [
@@ -120,6 +200,34 @@
       "id": "ADR-0007",
       "scope": "gpu-nnps",
       "status": "Accepted"
+    },
+    {
+      "date": "2026-08-04",
+      "file": "decisions/2026-08-04_adr-0008_axis-aligned-plane-contact-for-warp-rigid-bodies.md",
+      "id": "ADR-0008",
+      "scope": "warp-backend",
+      "status": "Accepted"
+    },
+    {
+      "date": "2026-08-04",
+      "file": "decisions/2026-08-04_adr-0009_pysph-convention-icosa13-apr-transfer.md",
+      "id": "ADR-0009",
+      "scope": "particle-memory",
+      "status": "Proposed"
+    },
+    {
+      "date": "2026-08-04",
+      "file": "decisions/2026-08-04_adr-0010_quaternion-reference-transform-for-warp-rigid-bodies.md",
+      "id": "ADR-0010",
+      "scope": "warp-backend",
+      "status": "Accepted"
+    },
+    {
+      "date": "2026-08-05",
+      "file": "decisions/2026-08-05_adr-0011_separate-h-gradients-for-variable-resolution-wcsph.md",
+      "id": "ADR-0011",
+      "scope": "warp-backend",
+      "status": "Proposed"
     }
   ]
 }

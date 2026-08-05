@@ -833,6 +833,47 @@ def test_multilevel_cross_array_traversal_and_ownership_2d():
     assert ml._ml[0] is not ml._ml[1]
 
 
+def test_multilevel_mixed_fluid_rigid_cross_array_neighbors_match_oracle_3d():
+    """Adaptive fluid/body contexts retain exact symmetric-cutoff sets."""
+    fluid_xyz = np.asarray([
+        [0.00, 0.00, 0.00], [0.06, 0.00, 0.02],
+        [0.14, 0.02, 0.04], [0.24, 0.00, 0.08],
+    ])
+    body_xyz = np.asarray([
+        [0.09, -0.04, 0.00], [0.09, 0.04, 0.00],
+        [0.17, -0.04, 0.08], [0.17, 0.04, 0.08],
+    ])
+    fluid_h = np.asarray([0.05, 0.05, 0.10, 0.10])
+    body_h = np.full(len(body_xyz), 0.10)
+    fluid = get_particle_array(
+        name="fluid", x=fluid_xyz[:, 0], y=fluid_xyz[:, 1],
+        z=fluid_xyz[:, 2], h=fluid_h, backend="warp",
+    )
+    body = get_particle_array(
+        name="body", x=body_xyz[:, 0], y=body_xyz[:, 1],
+        z=body_xyz[:, 2], h=body_h, backend="warp",
+    )
+    particles = [fluid, body]
+    ml = MultilevelGridWarpNNPS(
+        dim=3, particles=particles, radius_scale=2.0,
+        h_ref=0.05, level_ratio=2.0, nlevels=2,
+    )
+    arrays = {
+        0: (*fluid_xyz.T, fluid_h),
+        1: (*body_xyz.T, body_h),
+    }
+    for src_index, dst_index in ((0, 0), (1, 1), (0, 1), (1, 0)):
+        oracle = brute_force_neighbor_sets(
+            arrays[dst_index], arrays[src_index], radius_scale=2.0, dim=3
+        )
+        ml.set_context(src_index, dst_index)
+        for d_idx, expected in enumerate(oracle):
+            actual = _neighbors(ml, src_index, dst_index, d_idx)
+            assert np.array_equal(actual, expected), (
+                src_index, dst_index, d_idx, actual, expected
+            )
+
+
 def test_multilevel_particles_at_spatial_bounds_3d():
     # Particles at the geometric min/max corners of each level's occupied
     # region (all axes) must bin to valid cells via per-level padding, and keep

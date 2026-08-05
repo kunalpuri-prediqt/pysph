@@ -127,6 +127,102 @@ def test_split_cap_bounds_particle_growth():
     assert len(after["x"]) == 5 - 2 + 16
 
 
+def test_icosa13_split_preserves_invariants_and_reconstructs_linear_field():
+    state = _state(7)
+    state["x"] = np.asarray([0.5, 0.6, 0.4, 0.5, 0.5, 0.5, 0.5])
+    state["y"] = np.asarray([0.0, 0.0, 0.0, 0.1, -0.1, 0.0, 0.0])
+    state["z"] = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.1, -0.1])
+    state["x0"] = state["x"].copy()
+    state["y0"] = state["y"].copy()
+    state["z0"] = state["z"].copy()
+    state["p"] = 7.0 + 2.0 * state["x"] - 3.0 * state["y"] + 0.5 * state["z"]
+    state["u"] = -1.0 + state["x"] + 0.25 * state["y"]
+    state["u0"] = state["u"].copy()
+    controller = TwoLevelAdaptiveController(
+        hdx=1.0,
+        fine_bounds=(0.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+        max_splits_per_adapt=1,
+        split_stencil="icosa13",
+    )
+    before_mass, before_momentum = controller.invariants(state)
+    after, stats = controller.adapt(state)
+    family = after["family_id"] == 1
+    expected_p = (
+        7.0 + 2.0 * after["x"][family] - 3.0 * after["y"][family]
+        + 0.5 * after["z"][family]
+    )
+    after_mass, after_momentum = controller.invariants(after)
+    assert stats.created_children == 13
+    assert np.count_nonzero(family) == 13
+    assert np.isclose(after["m"][family].sum(), state["m"][0])
+    assert np.isclose(after["m"][family].min() / after["m"][family].max(),
+                      0.656566, rtol=2e-5)
+    assert np.allclose(after["p"][family], expected_p, atol=1e-12)
+    assert np.isclose(before_mass, after_mass)
+    assert np.allclose(before_momentum, after_momentum, atol=1e-12)
+
+
+def test_icosa13_complete_family_merge_recovers_parent():
+    controller = TwoLevelAdaptiveController(
+        hdx=1.0, split_stencil="icosa13",
+        fine_bounds=(0.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+    )
+    original = controller.initialize_state(_state())
+    split, _ = controller.adapt(original)
+    split["x"] += 2.0
+    split["x0"] += 2.0
+    merged, stats = controller.adapt(split)
+    assert stats.merged_families == 1
+    assert stats.removed_children == 13
+    assert len(merged["x"]) == 1
+    assert np.isclose(merged["m"][0], original["m"][0])
+    assert np.isclose(merged["h"][0], original["h"][0])
+
+
+def test_merge_hysteresis_prevents_boundary_thrashing():
+    controller = TwoLevelAdaptiveController(
+        hdx=1.0, hysteresis=0.2,
+        fine_bounds=(0.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+    )
+    split, _ = controller.adapt(_state())
+    split["x"] += 0.6
+    held, stats = controller.adapt(split)
+    assert stats.merged_families == 0
+    assert len(held["x"]) == 8
+    held["x"] += 0.2
+    merged, stats = controller.adapt(held)
+    assert stats.merged_families == 1
+    assert len(merged["x"]) == 1
+
+
+def test_icosa13_shifting_preserves_constant_and_linear_fields():
+    state = _state(7)
+    state["x"] = np.asarray([0.5, 0.62, 0.38, 0.5, 0.5, 0.5, 0.5])
+    state["y"] = np.asarray([0.0, 0.0, 0.0, 0.12, -0.12, 0.0, 0.0])
+    state["z"] = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.12, -0.12])
+    for axis in ("x", "y", "z"):
+        state[f"{axis}0"] = state[axis].copy()
+    state["rho"][:] = 1000.0
+    state["p"] = 2.0 * state["x"] - state["y"] + 0.5 * state["z"]
+    controller = TwoLevelAdaptiveController(
+        hdx=1.0, split_stencil="icosa13", max_splits_per_adapt=2,
+        shift_iterations=1, shift_coefficient=0.05,
+        fine_bounds=(0.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+    )
+    mass0, momentum0 = controller.invariants(state)
+    shifted, stats = controller.adapt(state)
+    expected = (
+        2.0 * shifted["x"] - shifted["y"] + 0.5 * shifted["z"]
+    )
+    mass1, momentum1 = controller.invariants(shifted)
+    assert stats.shifted_particles > 0
+    assert stats.max_shift <= 0.05 * np.max(shifted["h"])
+    assert np.all(shifted["rho"] == 1000.0)
+    assert np.allclose(shifted["p"], expected, atol=1e-11)
+    assert np.isclose(mass1, mass0)
+    assert np.allclose(momentum1, momentum0, atol=1e-12)
+
+
 def test_particles_outside_target_region_remain_coarse():
     controller = _controller()
     after, stats = controller.adapt(_state(x=3.0))
@@ -149,6 +245,41 @@ def test_config_round_trip_and_validation():
         DamBreakConfig(steps=0).validate()
 
 
+def test_config_normalizes_legacy_and_explicit_obstacle_modes():
+    fixed = DamBreakConfig.from_mapping({"with_obstacle": True})
+    absent = DamBreakConfig.from_mapping({"with_obstacle": False})
+    floating = DamBreakConfig.from_mapping({
+        "with_obstacle": False,
+        "obstacle_mode": "floating",
+    })
+    assert fixed.obstacle_mode == "fixed"
+    assert absent.obstacle_mode == "none"
+    assert floating.obstacle_mode == "floating"
+    assert floating.with_obstacle is True
+    defaults = DamBreakConfig().to_dict()
+    assert defaults["obstacle_mode"] == "fixed"
+    assert defaults["variable_h_correction"] is True
+    assert defaults["adapt_hysteresis"] == 0.0
+    assert defaults["shift_iterations"] == 0
+
+
+def test_config_rejects_invalid_floating_body_values():
+    with pytest.raises(ValueError, match="obstacle_mode"):
+        DamBreakConfig(obstacle_mode="drifting").validate()
+    with pytest.raises(ValueError, match="body_density"):
+        DamBreakConfig(body_density=0.0).validate()
+    with pytest.raises(ValueError, match="dimensions"):
+        DamBreakConfig(body_height=0.0).validate()
+    with pytest.raises(ValueError, match="contact_restitution"):
+        DamBreakConfig(contact_restitution=0.0).validate()
+    with pytest.raises(ValueError, match="stiffness"):
+        DamBreakConfig(contact_stiffness=0.0).validate()
+    with pytest.raises(ValueError, match="increasing"):
+        DamBreakConfig(
+            contact_bounds=(1.0, 0.0, -0.25, 0.25, 0.0, 1.5)
+        ).validate()
+
+
 def test_invalid_controller_configuration_is_rejected():
     with pytest.raises(ValueError, match="hdx"):
         TwoLevelAdaptiveController(hdx=0)
@@ -158,3 +289,69 @@ def test_invalid_controller_configuration_is_rejected():
         TwoLevelAdaptiveController(
             fine_bounds=(1, 0, -1, 1, -1, 1)
         )
+
+
+def _crossing_cube_state():
+    coordinates = np.asarray([
+        (x, y, z)
+        for x in (0.35, 0.50, 0.65)
+        for y in (-0.15, 0.0, 0.15)
+        for z in (0.20, 0.35, 0.50)
+    ])
+    state = _state(len(coordinates))
+    for column, name in enumerate(("x", "y", "z")):
+        state[name] = coordinates[:, column].copy()
+        state[name + "0"] = coordinates[:, column].copy()
+    state["m"][:] = 1.0
+    state["h"][:] = 0.20
+    state["u"][:] = 0.75
+    state["v"][:] = -0.10
+    state["w"][:] = 0.05
+    state["u0"] = state["u"].copy()
+    state["v0"] = state["v"].copy()
+    state["w0"] = state["w"].copy()
+    state["rho"][:] = 1000.0
+    state["rho0"] = state["rho"].copy()
+    state["p"] = 12000.0 - 9810.0 * state["z"]
+    return state
+
+
+def test_repeated_translating_split_merge_crossings_preserve_state():
+    controller = TwoLevelAdaptiveController(
+        hdx=1.3,
+        fine_bounds=(0.25, 0.75, -0.25, 0.25, 0.10, 0.60),
+        max_splits_per_adapt=64,
+        split_stencil="icosa13",
+        hysteresis=0.05,
+        shift_iterations=0,
+    )
+    state = controller.initialize_state(_crossing_cube_state())
+    mass0, momentum0 = controller.invariants(state)
+
+    for _ in range(4):
+        state, split = controller.adapt(state)
+        assert split.split_parents == 27
+        assert split.mass_residual <= 5.0e-9
+        assert split.momentum_residual <= 5.0e-8
+        assert np.allclose(state["rho"], 1000.0)
+        np.testing.assert_allclose(
+            state["p"], 12000.0 - 9810.0 * state["z"],
+            rtol=0.0, atol=2.0e-10,
+        )
+
+        state["x"] += 1.5
+        state["x0"] += 1.5
+        state, merged = controller.adapt(state)
+        assert merged.merged_families == 27
+        assert len(state["x"]) == 27
+        assert np.all(state["level"] == 0)
+        np.testing.assert_allclose(
+            state["p"], 12000.0 - 9810.0 * state["z"],
+            rtol=0.0, atol=2.0e-10,
+        )
+        state["x"] -= 1.5
+        state["x0"] -= 1.5
+
+    mass1, momentum1 = controller.invariants(state)
+    assert np.isclose(mass1, mass0, rtol=0.0, atol=2.0e-12)
+    np.testing.assert_allclose(momentum1, momentum0, rtol=0.0, atol=2.0e-12)

@@ -11,7 +11,7 @@ from vtk_scene import ParticleScene
 from worker import FrameBuffer, put_latest
 
 
-def _snapshot():
+def _snapshot(obstacle_mode="fixed"):
     return {
         "xyz": np.asarray([
             [0.0, 0.0, 0.1],
@@ -25,6 +25,7 @@ def _snapshot():
         "speed": np.asarray([0, 1, 0, 0], dtype=np.float32),
         "level": np.asarray([0, 1, 2, 2], dtype=np.uint8),
         "kind": np.asarray([0, 0, 1, 2], dtype=np.uint8),
+        "obstacle_mode": obstacle_mode,
     }
 
 
@@ -70,6 +71,21 @@ def test_run_config_validation_rejects_bad_stride_and_bounds():
         validate_run_config(config, snapshot_stride=1)
 
 
+def test_run_config_validation_rejects_bad_floating_body_values():
+    config = _config()
+    config["obstacle_mode"] = "drifting"
+    with pytest.raises(ValueError, match="Obstacle mode"):
+        validate_run_config(config, snapshot_stride=1)
+    config = _config()
+    config.update(obstacle_mode="floating", body_density=0.0)
+    with pytest.raises(ValueError, match="density"):
+        validate_run_config(config, snapshot_stride=1)
+    config = _config()
+    config.update(obstacle_mode="floating", body_height=0.0)
+    with pytest.raises(ValueError, match="dimensions"):
+        validate_run_config(config, snapshot_stride=1)
+
+
 def test_put_latest_drops_stale_message():
     queue = Queue(maxsize=1)
     put_latest(queue, {"value": 1})
@@ -91,10 +107,13 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     camera = scene.renderer.GetActiveCamera()
     position = camera.GetPosition()
     scene.update(_snapshot())
+    assert scene.scalar == "pressure"
     assert scene.fluid.polydata.GetNumberOfPoints() == 2
     assert scene.fluid.mapper.IsA("vtkGlyph3DMapper")
     assert scene.wall.polydata.GetNumberOfPoints() == 1
     assert scene.obstacle.polydata.GetNumberOfPoints() == 1
+    assert scene.obstacle.actor.GetVisibility() == 0
+    assert scene.context_obstacle.GetVisibility() == 1
     assert camera.GetPosition() == position
     scene.set_scalar("resolution")
     assert scene.scalar_bar.GetTitle() == "Refinement"
@@ -112,6 +131,23 @@ def test_particle_scene_updates_all_actors_and_preserves_camera():
     assert scene.scalar_bar.GetVisibility() == 1
 
 
+def test_particle_scene_draws_floating_body_as_particles():
+    scene = ParticleScene()
+    scene.update(_snapshot(obstacle_mode="floating"))
+    assert scene.obstacle.mapper.IsA("vtkGlyph3DMapper")
+    assert scene.obstacle.polydata.GetPointData().GetArray("h") is not None
+    assert scene.obstacle.actor.GetVisibility() == 1
+    assert scene.context_obstacle.GetVisibility() == 0
+    scene.set_obstacle_visible(False)
+    assert scene.obstacle.actor.GetVisibility() == 0
+    scene.set_obstacle_visible(True)
+    assert scene.obstacle.actor.GetVisibility() == 1
+    scene.set_obstacle_mode("none")
+    scene.set_obstacle_visible(True)
+    assert scene.obstacle.actor.GetVisibility() == 0
+    assert scene.context_obstacle.GetVisibility() == 0
+
+
 def test_particle_scene_produces_browser_fallback_image():
     scene = ParticleScene()
     scene.update(_snapshot())
@@ -124,9 +160,14 @@ def test_particle_scene_produces_browser_fallback_image():
 def test_load_saved_result_restores_snapshot_and_metrics(tmp_path):
     path = tmp_path / "result.npz"
     snapshot = _snapshot()
-    np.savez(path, **snapshot, metrics=json.dumps({"step": 12, "steps": 12}))
+    snapshot.pop("obstacle_mode")
+    expected_metrics = {
+        "step": 12, "steps": 12, "obstacle_mode": "floating",
+    }
+    np.savez(path, **snapshot, metrics=json.dumps(expected_metrics))
     loaded_snapshot, metrics = load_saved_result(path)
-    assert metrics == {"step": 12, "steps": 12}
+    assert metrics == expected_metrics
+    assert loaded_snapshot["obstacle_mode"] == "floating"
     np.testing.assert_array_equal(loaded_snapshot["xyz"], snapshot["xyz"])
 
 
@@ -139,6 +180,9 @@ def test_studio_uses_explicit_three_panel_workspace(monkeypatch, tmp_path):
     assert 'class="viewport-wrap"' in markup
     assert 'class="details-panel"' in markup
     assert 'class="viewport-controls"' in markup
+    assert 'class="scalar-toggle"' in markup
+    assert "Pressure" in markup
+    assert "Speed" in markup
     assert "Reset view" in markup
     assert "timeline-label" in markup
     assert "viewport-hud" not in markup
@@ -172,8 +216,21 @@ def test_studio_states_used_by_new_chrome_are_present(monkeypatch, tmp_path):
     server = get_server("studio-state-test", client_type="vue3")
     studio = WarpDamBreakStudio(server=server)
     for key in ("step", "step_total", "status", "status_detail", "run_active",
-                "frame_image", "mode_items", "resolution_mode", "viewport_size"):
+                "frame_image", "mode_items", "resolution_mode", "viewport_size",
+                "obstacle_mode", "obstacle_items", "body_geometry_drift"):
         assert studio.state.has(key)
+
+
+def test_studio_exposes_floating_body_controls(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.DEFAULT_OUTPUT", str(tmp_path / "missing.npz"))
+    server = get_server("studio-floating-test", client_type="vue3")
+    studio = WarpDamBreakStudio(server=server)
+    markup = studio.ui.html
+    assert "Floating body" in markup
+    assert "body_density" in markup
+    assert "body_geometry_drift" in markup
+    assert "rigid_device_error" in markup
+    assert "contact_max_penetration" in markup
 
 
 def test_viewport_size_resizes_render_window(monkeypatch, tmp_path):

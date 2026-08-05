@@ -15,17 +15,21 @@ from pysph.base.nnps import LinkedListNNPS
 from pysph.base.utils import get_particle_array
 from pysph.base.warp_nnps import UniformGridWarpNNPS
 from pysph.base.warp_multilevel_nnps import MultilevelGridWarpNNPS
+from pysph.base.warp_adaptive import DamBreakConfig, WarpDamBreakSimulation
 import pysph.base.warp_sph as warp_sph
 from pysph.base.warp_sph import (
-    apply_body_force, compute_artificial_viscosity, compute_continuity,
+    apply_body_force, apply_rigid_plane_contact,
+    compute_artificial_viscosity, compute_continuity,
     compute_isothermal_eos, compute_pressure_gradient, compute_summation_density,
     compute_liu_fluid_rigid_coupling, compute_rigid_body_moments,
     compute_rigid_body_moments_device, compute_rigid_number_density,
+    compute_variable_h_beta,
     compute_tait_eos, compute_tait_eos_hg_correction, create_rigid_body_state,
     compute_wcsph_accel_continuity, compute_wcsph_adaptive_timestep,
     compute_xsph_correction, euler_step, leapfrog_drift, leapfrog_kick,
     initialize_rigid_body_force, rigid_body_density_stage,
-    rigid_body_rk2_stage, save_rigid_body_density, save_rigid_body_state,
+    rigid_body_rk2_stage, rigid_contact_timestep, save_rigid_body_density,
+    save_rigid_body_state,
     save_wcsph_state, wc_sph_dam_break_rigid_step, wc_sph_dam_break_step,
     wc_sph_euler_step, wc_sph_leapfrog_step, wcsph_pec_stage, wrap_periodic
 )
@@ -2335,7 +2339,8 @@ def test_warp_rigid_density_and_body_force_stages():
     assert np.allclose(pa.fz, -9.81 * pa.m)
 
 
-def test_warp_dam_break_rigid_step_is_finite_and_moves_body():
+@pytest.mark.parametrize("neighbor_mode", ["grid", "multilevel"])
+def test_warp_dam_break_rigid_step_is_finite_and_moves_body(neighbor_mode):
     # Small genuine 3D fluid/body interaction. The fixed wall is deliberately
     # far away: this gates Liu + rigid EPEC without introducing contact yet.
     fgrid = np.array(np.meshgrid(
@@ -2365,15 +2370,21 @@ def test_warp_dam_break_rigid_step_is_finite_and_moves_body():
         body.add_property(prop)
 
     state = create_rigid_body_state(body, nbody=1)
-    nnps = UniformGridWarpNNPS(
-        dim=3, particles=[fluid, wall, body], radius_scale=2.0)
+    if neighbor_mode == "multilevel":
+        nnps = MultilevelGridWarpNNPS(
+            dim=3, particles=[fluid, wall, body], radius_scale=2.0,
+            h_ref=0.09, level_ratio=2.0, nlevels=2)
+    else:
+        nnps = UniformGridWarpNNPS(
+            dim=3, particles=[fluid, wall, body], radius_scale=2.0)
     body0 = bgrid.copy()
     wall0 = wgrid.copy()
     dt = 1.0e-5
     wc_sph_dam_break_rigid_step(
         nnps, state, fluid_index=0, wall_indices=(1,), rigid_index=2,
         dt=dt, rho0=1000.0, c0=20.0, alpha=0.0, beta=0.0,
-        kernel='wendland', xsph_eps=0.0, gz=-9.81, push=True)
+        kernel='wendland', xsph_eps=0.0, gz=-9.81, push=True,
+        neighbor_mode=neighbor_mode)
 
     fluid.gpu.pull('x', 'y', 'z', 'rho', 'u', 'v', 'w')
     wall.gpu.pull('x', 'y', 'z')
@@ -2390,6 +2401,311 @@ def test_warp_dam_break_rigid_step_is_finite_and_moves_body():
     assert np.allclose(
         np.linalg.norm(got_body - got_body[0], axis=1),
         np.linalg.norm(body0 - body0[0], axis=1), atol=2e-7)
+
+
+def test_warp_rigid_plane_contact_is_zero_away_and_opposes_impact():
+    pa = get_particle_array(
+        name='body', x=[0.5], y=[0.5], z=[0.5], h=[0.1], m=[1.0],
+        u=[0.0], v=[0.0], w=[0.0], backend='warp')
+    for prop in ('fx', 'fy', 'fz'):
+        pa.add_property(prop)
+    bounds = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+    initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0, push=True)
+    apply_rigid_plane_contact(pa, bounds, radius=0.05, push=False)
+    pa.gpu.pull('contact_fx', 'contact_fy', 'contact_fz', 'penetration')
+    assert np.array_equal(pa.contact_fx, [0.0])
+    assert np.array_equal(pa.contact_fy, [0.0])
+    assert np.array_equal(pa.contact_fz, [0.0])
+    assert np.array_equal(pa.penetration, [0.0])
+
+    pa.z[:] = 0.04
+    pa.u[:] = 0.4
+    pa.w[:] = -1.0
+    pa.gpu.push('z', 'u', 'w')
+    initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0)
+    apply_rigid_plane_contact(
+        pa, bounds, radius=0.05, stiffness=1000.0,
+        restitution=0.5, friction=0.2)
+    pa.gpu.pull('contact_fx', 'contact_fz', 'penetration')
+    assert pa.contact_fz[0] > 10.0
+    assert pa.contact_fx[0] < 0.0
+    assert pa.penetration[0] == 0.0
+
+
+def test_warp_rigid_plane_contact_damped_bounce_does_not_add_energy():
+    xyz = np.array(np.meshgrid(
+        [-0.05, 0.05], [-0.05, 0.05], [0.049, 0.149],
+        indexing='ij')).reshape(3, -1).T
+    n = len(xyz)
+    pa = get_particle_array(
+        name='body', x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+        h=np.full(n, 0.1), m=np.full(n, 1.0 / n),
+        u=np.zeros(n), v=np.zeros(n), w=np.full(n, -1.0),
+        backend='warp')
+    for prop in ('fx', 'fy', 'fz'):
+        pa.add_property(prop)
+    state = create_rigid_body_state(pa, nbody=1, vc=[[0.0, 0.0, -1.0]])
+    bounds = (-1.0, 1.0, -1.0, 1.0, 0.0, 2.0)
+    stiffness = 1000.0
+    radius = 0.05
+    initial_overlap = radius - xyz[:, 2]
+    initial_energy = 0.5 + 0.5 * stiffness * np.sum(
+        np.maximum(initial_overlap, 0.0) ** 2)
+    dt = min(1.0e-4, rigid_contact_timestep(pa, stiffness, safety=0.1))
+    for _ in range(700):
+        save_rigid_body_state(pa, state)
+        for stage in (0.5, 1.0):
+            initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0)
+            apply_rigid_plane_contact(
+                pa, bounds, radius=radius, stiffness=stiffness,
+                restitution=0.5, friction=0.0)
+            rigid_body_rk2_stage(pa, state, dt=dt, stage=stage)
+    pa.gpu.pull('x', 'y', 'z')
+    final_vc = state.vc.numpy().reshape(-1, 3)[0]
+    final_overlap = radius - pa.z
+    final_energy = 0.5 * np.dot(final_vc, final_vc) + (
+        0.5 * stiffness * np.sum(np.maximum(final_overlap, 0.0) ** 2)
+    )
+    assert final_vc[2] > 0.0
+    assert final_energy <= initial_energy * (1.0 + 2.0e-3)
+    assert np.max(np.maximum(-pa.z, 0.0)) < 0.025
+
+
+def test_warp_rigid_plane_contact_handles_corner_multi_contact():
+    pa = get_particle_array(
+        name='body', x=[-0.01], y=[-0.01], z=[-0.01], h=[0.1],
+        m=[1.0], u=[-1.0], v=[-2.0], w=[-3.0], backend='warp')
+    for prop in ('fx', 'fy', 'fz'):
+        pa.add_property(prop)
+    initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0, push=True)
+    apply_rigid_plane_contact(
+        pa, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0), radius=0.05,
+        stiffness=1000.0, restitution=0.5, friction=0.0)
+    pa.gpu.pull('contact_fx', 'contact_fy', 'contact_fz', 'penetration')
+    assert pa.contact_fx[0] > 0.0
+    assert pa.contact_fy[0] > 0.0
+    assert pa.contact_fz[0] > 0.0
+    assert np.isclose(pa.penetration[0], 0.01, rtol=1e-6)
+
+
+def test_quaternion_rigid_stage_preserves_geometry_under_long_rotation():
+    xyz = np.array(np.meshgrid(
+        [-0.1, 0.1], [-0.1, 0.1], [-0.1, 0.1],
+        indexing='ij')).reshape(3, -1).T
+    n = len(xyz)
+    pa = get_particle_array(
+        name='body', x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+        h=np.full(n, 0.1), m=np.full(n, 1.0 / n), backend='warp')
+    for prop in ('fx', 'fy', 'fz'):
+        pa.add_property(prop)
+    state = create_rigid_body_state(
+        pa, nbody=1, omega=[[1.0, 2.0, 3.0]])
+    distance0 = np.linalg.norm(xyz - xyz[0], axis=1)
+    for _ in range(500):
+        initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0)
+        save_rigid_body_state(pa, state)
+        rigid_body_rk2_stage(pa, state, dt=1.0e-3, stage=0.5)
+        initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=0.0)
+        rigid_body_rk2_stage(pa, state, dt=1.0e-3, stage=1.0)
+    pa.gpu.pull('x', 'y', 'z')
+    got = np.column_stack((pa.x, pa.y, pa.z))
+    distance = np.linalg.norm(got - got[0], axis=1)
+    drift = np.max(np.abs(distance - distance0)) / np.max(distance0)
+    assert drift < 1.0e-6
+    assert np.isclose(np.linalg.norm(state.q.numpy()), 1.0, atol=1e-12)
+
+
+def test_adaptive_rebuild_does_not_rewind_rigid_device_coordinates():
+    simulation = WarpDamBreakSimulation(DamBreakConfig(
+        resolution_mode="adaptive", obstacle_mode="floating", dx=0.2,
+        steps=2, shift_iterations=0, max_splits_per_adapt=8,
+    ))
+    simulation.initialize()
+    body = simulation.particles[2]
+    shifted_x = body.gpu.x.get() + np.float32(0.123)
+    body.gpu.x.set(shifted_x)
+    assert not np.array_equal(body.x, shifted_x)
+    simulation._adapt()
+    np.testing.assert_array_equal(body.gpu.x.get(), shifted_x)
+    assert body.get_number_of_particles() == simulation.rigid_state.particle_count
+    assert np.isclose(np.sum(body.gpu.m.get()), simulation.metrics()["body_mass"])
+
+
+def test_variable_h_operators_match_separate_h_oracle_and_conserve_force():
+    x = np.asarray([0.00, 0.08, 0.17, 0.29], dtype=np.float32)
+    h = np.asarray([0.11, 0.08, 0.14, 0.10], dtype=np.float32)
+    m = np.asarray([1.0, 0.45, 1.3, 0.7], dtype=np.float32)
+    rho = np.asarray([1000.0, 995.0, 1008.0, 1002.0], dtype=np.float32)
+    p = np.asarray([12.0, 25.0, -4.0, 18.0], dtype=np.float32)
+    velocity = np.asarray([0.20, -0.15, 0.08, 0.31], dtype=np.float32)
+    pa = get_particle_array(
+        name='fluid', x=x, y=np.zeros(4), z=np.zeros(4), h=h, m=m,
+        rho=rho, p=p, beta_h=np.ones(4), u=velocity,
+        v=np.zeros(4), w=np.zeros(4), au=np.zeros(4), av=np.zeros(4),
+        aw=np.zeros(4), arho=np.zeros(4), backend='warp')
+    nnps = UniformGridWarpNNPS(dim=2, particles=[pa], radius_scale=2.0)
+    compute_variable_h_beta(
+        nnps, 0, [0], kernel='wendland', neighbor_mode='grid')
+    pa.gpu.pull('beta_h')
+
+    kernel = WendlandQuintic(dim=2)
+    expected = np.zeros(4)
+    for i in range(4):
+        for j in range(4):
+            rij = abs(float(x[i] - x[j]))
+            if rij < 2.0 * max(float(h[i]), float(h[j])) and rij > 1.0e-12:
+                dwdq = kernel.dwdq(rij=rij, h=float(h[i]))
+                grad = dwdq / (float(h[i]) * rij)
+                expected[i] -= (
+                    float(m[j]) * rij * rij * grad / (2.0 * float(rho[i]))
+                )
+        if abs(expected[i]) < 1.0e-8:
+            expected[i] = 1.0
+    np.testing.assert_allclose(pa.beta_h, expected, rtol=2.0e-5, atol=2.0e-6)
+
+    warp_sph._run_equation_group(
+        nnps, 0, 0, [warp_sph.VariableHPressureGradient()],
+        kernel='wendland', neighbor_mode='grid')
+    pa.gpu.pull('au', 'av', 'aw')
+    expected_au = np.zeros(4)
+    for i in range(4):
+        for j in range(4):
+            dxij = float(x[i] - x[j])
+            rij = abs(dxij)
+            if rij < 2.0 * max(float(h[i]), float(h[j])) and rij > 1.0e-12:
+                gradi = kernel.dwdq(rij=rij, h=float(h[i])) / (
+                    float(h[i]) * rij)
+                gradj = kernel.dwdq(rij=rij, h=float(h[j])) / (
+                    float(h[j]) * rij)
+                pair = (
+                    float(p[i]) * gradi /
+                    (expected[i] * float(rho[i]) * float(rho[i])) +
+                    float(p[j]) * gradj /
+                    (expected[j] * float(rho[j]) * float(rho[j]))
+                )
+                expected_au[i] -= float(m[j]) * pair * dxij
+    np.testing.assert_allclose(pa.au, expected_au, rtol=3.0e-5, atol=2.0e-7)
+    total_force = np.asarray([
+        np.sum(m * pa.au), np.sum(m * pa.av), np.sum(m * pa.aw)
+    ])
+    np.testing.assert_allclose(total_force, 0.0, atol=2.0e-5)
+
+    warp_sph._run_equation_group(
+        nnps, 0, 0, [warp_sph.VariableHContinuityEquation()],
+        kernel='wendland', neighbor_mode='grid')
+    pa.gpu.pull('arho')
+    expected_arho = np.zeros(4)
+    for i in range(4):
+        for j in range(4):
+            dxij = float(x[i] - x[j])
+            rij = abs(dxij)
+            if rij < 2.0 * max(float(h[i]), float(h[j])) and rij > 1.0e-12:
+                gradi = kernel.dwdq(rij=rij, h=float(h[i])) / (
+                    float(h[i]) * rij)
+                expected_arho[i] += (
+                    float(m[j]) * float(velocity[i] - velocity[j]) *
+                    gradi * dxij / expected[i]
+                )
+    np.testing.assert_allclose(
+        pa.arho, expected_arho, rtol=3.0e-5, atol=2.0e-5)
+
+
+def test_variable_h_blocks_reduce_to_symmetric_blocks_for_equal_h():
+    values = dict(
+        x=[0.0, 0.11, 0.23], y=[0.0, 0.03, -0.02], z=np.zeros(3),
+        h=np.full(3, 0.2), m=[1.0, 0.8, 1.2],
+        rho=[1000.0, 990.0, 1010.0], p=[1200.0, 2100.0, -300.0],
+        u=[0.2, -0.1, 0.3], v=[-0.05, 0.12, 0.07], w=np.zeros(3),
+        au=np.zeros(3), av=np.zeros(3), aw=np.zeros(3), arho=np.zeros(3),
+    )
+    regular = get_particle_array(name='regular', backend='warp', **values)
+    variable = get_particle_array(
+        name='variable', beta_h=np.ones(3), backend='warp', **values)
+    regular_nnps = UniformGridWarpNNPS(
+        dim=2, particles=[regular], radius_scale=2.0)
+    variable_nnps = UniformGridWarpNNPS(
+        dim=2, particles=[variable], radius_scale=2.0)
+
+    warp_sph._run_equation_group(
+        regular_nnps, 0, 0,
+        [warp_sph.PressureGradient(), warp_sph.ContinuityEquation()],
+        kernel='wendland', neighbor_mode='grid')
+    warp_sph._run_equation_group(
+        variable_nnps, 0, 0,
+        [warp_sph.VariableHPressureGradient(),
+         warp_sph.VariableHContinuityEquation()],
+        kernel='wendland', neighbor_mode='grid')
+    regular.gpu.pull('au', 'av', 'aw', 'arho')
+    variable.gpu.pull('au', 'av', 'aw', 'arho')
+    for prop in ('au', 'av', 'aw', 'arho'):
+        np.testing.assert_allclose(
+            getattr(variable, prop), getattr(regular, prop),
+            rtol=2.0e-6, atol=2.0e-7)
+
+
+def test_variable_h_pressure_conserves_force_and_torque_in_3d():
+    xyz = np.asarray([
+        [0.00, 0.00, 0.00], [0.12, 0.03, -0.02],
+        [-0.04, 0.15, 0.07], [0.08, -0.09, 0.13],
+    ], dtype=np.float32)
+    pa = get_particle_array(
+        name='fluid', x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+        h=[0.11, 0.19, 0.15, 0.23], m=[1.0, 0.7, 1.3, 0.55],
+        rho=[1000.0, 980.0, 1015.0, 995.0],
+        p=[1400.0, -250.0, 2200.0, 800.0],
+        beta_h=[0.7, 1.1, 0.85, 1.25],
+        au=np.zeros(4), av=np.zeros(4), aw=np.zeros(4), backend='warp')
+    nnps = UniformGridWarpNNPS(dim=3, particles=[pa], radius_scale=2.0)
+    warp_sph._run_equation_group(
+        nnps, 0, 0, [warp_sph.VariableHPressureGradient()],
+        kernel='wendland', neighbor_mode='grid')
+    pa.gpu.pull('au', 'av', 'aw')
+    force = pa.m[:, None] * np.column_stack((pa.au, pa.av, pa.aw))
+    np.testing.assert_allclose(np.sum(force, axis=0), 0.0, atol=4.0e-5)
+    np.testing.assert_allclose(
+        np.sum(np.cross(xyz, force), axis=0), 0.0, atol=4.0e-6)
+
+
+def test_variable_h_liu_coupling_conserves_force_and_torque():
+    fluid_xyz = np.asarray([
+        [0.00, 0.00, 0.10],
+        [0.11, 0.04, 0.18],
+    ], dtype=np.float32)
+    body_xyz = np.asarray([
+        [0.16, -0.03, 0.14],
+        [-0.06, 0.07, 0.22],
+    ], dtype=np.float32)
+    fluid = get_particle_array(
+        name='fluid', x=fluid_xyz[:, 0], y=fluid_xyz[:, 1],
+        z=fluid_xyz[:, 2], h=[0.18, 0.28], m=[1.0, 0.7],
+        rho=[1000.0, 985.0], p=[1200.0, 2300.0], beta_h=[0.6, 1.1],
+        u=np.zeros(2), v=np.zeros(2), w=np.zeros(2),
+        au=np.zeros(2), av=np.zeros(2), aw=np.zeros(2), backend='warp')
+    body = get_particle_array(
+        name='body', x=body_xyz[:, 0], y=body_xyz[:, 1],
+        z=body_xyz[:, 2], h=[0.24, 0.16], m=[0.8, 1.2],
+        rho=[1010.0, 995.0], p=[1800.0, 900.0],
+        fx=np.zeros(2), fy=np.zeros(2), fz=np.zeros(2), backend='warp')
+    nnps = UniformGridWarpNNPS(
+        dim=3, particles=[fluid, body], radius_scale=2.0)
+
+    compute_liu_fluid_rigid_coupling(
+        nnps, 0, 1, kernel='wendland', push=True,
+        variable_h_correction=True)
+    fluid.gpu.pull('au', 'av', 'aw')
+    body.gpu.pull('fx', 'fy', 'fz')
+    fluid_force = np.sum(
+        fluid.m[:, None] * np.column_stack((fluid.au, fluid.av, fluid.aw)),
+        axis=0,
+    )
+    body_force = np.sum(np.column_stack((body.fx, body.fy, body.fz)), axis=0)
+    torque = np.sum(np.cross(fluid_xyz, fluid.m[:, None] * np.column_stack(
+        (fluid.au, fluid.av, fluid.aw))), axis=0)
+    torque += np.sum(np.cross(
+        body_xyz, np.column_stack((body.fx, body.fy, body.fz))), axis=0)
+
+    np.testing.assert_allclose(fluid_force + body_force, 0.0, atol=3.0e-5)
+    np.testing.assert_allclose(torque, 0.0, atol=3.0e-5)
 
 
 # ---------------------------------------------------------------------------

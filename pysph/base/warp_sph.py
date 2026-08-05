@@ -1233,14 +1233,64 @@ if wp is not None:
 
     @wp.kernel
     def _rigid_save_body_state(
+            cm: wp.array(dtype=wp.float64),
             vc: wp.array(dtype=wp.float64),
             omega: wp.array(dtype=wp.float64),
+            cm0: wp.array(dtype=wp.float64),
             vc0: wp.array(dtype=wp.float64),
             omega0: wp.array(dtype=wp.float64),
     ):
         i = wp.tid()
+        cm0[i] = cm[i]
         vc0[i] = vc[i]
         omega0[i] = omega[i]
+
+
+    @wp.kernel
+    def _rigid_save_orientation(
+            q: wp.array(dtype=wp.float64),
+            q0: wp.array(dtype=wp.float64),
+    ):
+        i = wp.tid()
+        q0[i] = q[i]
+
+
+    @wp.kernel
+    def _rigid_orientation_stage(
+            q0: wp.array(dtype=wp.float64),
+            omega: wp.array(dtype=wp.float64),
+            q: wp.array(dtype=wp.float64),
+            dt_factor: wp.float64,
+    ):
+        body = wp.tid()
+        base3 = body * wp.int32(3)
+        base4 = body * wp.int32(4)
+        wx = omega[base3 + 0]
+        wy = omega[base3 + 1]
+        wz = omega[base3 + 2]
+        magnitude = wp.sqrt(wx * wx + wy * wy + wz * wz)
+        half_angle = wp.float64(0.5) * magnitude * dt_factor
+        dw = wp.cos(half_angle)
+        scale = wp.float64(0.5) * dt_factor
+        if magnitude > wp.float64(1.0e-30):
+            scale = wp.sin(half_angle) / magnitude
+        dx = scale * wx
+        dy = scale * wy
+        dz = scale * wz
+        qw = q0[base4 + 0]
+        qx = q0[base4 + 1]
+        qy = q0[base4 + 2]
+        qz = q0[base4 + 3]
+        # World-frame angular velocity: dq left-multiplies q0.
+        rw = dw * qw - dx * qx - dy * qy - dz * qz
+        rx = dw * qx + dx * qw + dy * qz - dz * qy
+        ry = dw * qy - dx * qz + dy * qw + dz * qx
+        rz = dw * qz + dx * qy - dy * qx + dz * qw
+        norm = wp.sqrt(rw * rw + rx * rx + ry * ry + rz * rz)
+        q[base4 + 0] = rw / norm
+        q[base4 + 1] = rx / norm
+        q[base4 + 2] = ry / norm
+        q[base4 + 3] = rz / norm
 
 
     @wp.kernel
@@ -1291,12 +1341,13 @@ if wp is not None:
     @wp.kernel
     def _rigid_motion_stage_f64(
             body_id: wp.array(dtype=wp.int32),
-            cm: wp.array(dtype=wp.float64),
+            reference_x: wp.array(dtype=wp.float64),
+            reference_y: wp.array(dtype=wp.float64),
+            reference_z: wp.array(dtype=wp.float64),
+            q: wp.array(dtype=wp.float64),
+            cm0: wp.array(dtype=wp.float64),
             vc: wp.array(dtype=wp.float64),
             omega: wp.array(dtype=wp.float64),
-            x0: wp.array(dtype=wp.float64),
-            y0: wp.array(dtype=wp.float64),
-            z0: wp.array(dtype=wp.float64),
             x: wp.array(dtype=wp.float64),
             y: wp.array(dtype=wp.float64),
             z: wp.array(dtype=wp.float64),
@@ -1306,10 +1357,23 @@ if wp is not None:
             dt_factor: wp.float64,
     ):
         i = wp.tid()
-        base = body_id[i] * wp.int32(3)
-        rx = x[i] - cm[base + 0]
-        ry = y[i] - cm[base + 1]
-        rz = z[i] - cm[base + 2]
+        body = body_id[i]
+        base = body * wp.int32(3)
+        base4 = body * wp.int32(4)
+        qw = q[base4 + 0]
+        qx = q[base4 + 1]
+        qy = q[base4 + 2]
+        qz = q[base4 + 3]
+        vx = reference_x[i]
+        vy = reference_y[i]
+        vz = reference_z[i]
+        # Quaternion rotation, expanded to avoid temporary matrix storage.
+        tx = wp.float64(2.0) * (qy * vz - qz * vy)
+        ty = wp.float64(2.0) * (qz * vx - qx * vz)
+        tz = wp.float64(2.0) * (qx * vy - qy * vx)
+        rx = vx + qw * tx + (qy * tz - qz * ty)
+        ry = vy + qw * ty + (qz * tx - qx * tz)
+        rz = vz + qw * tz + (qx * ty - qy * tx)
         wx = omega[base + 0]
         wy = omega[base + 1]
         wz = omega[base + 2]
@@ -1319,20 +1383,21 @@ if wp is not None:
         u[i] = ui
         v[i] = vi
         w[i] = wi
-        x[i] = x0[i] + dt_factor * ui
-        y[i] = y0[i] + dt_factor * vi
-        z[i] = z0[i] + dt_factor * wi
+        x[i] = cm0[base + 0] + dt_factor * vc[base + 0] + rx
+        y[i] = cm0[base + 1] + dt_factor * vc[base + 1] + ry
+        z[i] = cm0[base + 2] + dt_factor * vc[base + 2] + rz
 
 
     @wp.kernel
     def _rigid_motion_stage_f32(
             body_id: wp.array(dtype=wp.int32),
-            cm: wp.array(dtype=wp.float64),
+            reference_x: wp.array(dtype=wp.float64),
+            reference_y: wp.array(dtype=wp.float64),
+            reference_z: wp.array(dtype=wp.float64),
+            q: wp.array(dtype=wp.float64),
+            cm0: wp.array(dtype=wp.float64),
             vc: wp.array(dtype=wp.float64),
             omega: wp.array(dtype=wp.float64),
-            x0: wp.array(dtype=wp.float32),
-            y0: wp.array(dtype=wp.float32),
-            z0: wp.array(dtype=wp.float32),
             x: wp.array(dtype=wp.float32),
             y: wp.array(dtype=wp.float32),
             z: wp.array(dtype=wp.float32),
@@ -1342,10 +1407,22 @@ if wp is not None:
             dt_factor: wp.float64,
     ):
         i = wp.tid()
-        base = body_id[i] * wp.int32(3)
-        rx = wp.float64(x[i]) - cm[base + 0]
-        ry = wp.float64(y[i]) - cm[base + 1]
-        rz = wp.float64(z[i]) - cm[base + 2]
+        body = body_id[i]
+        base = body * wp.int32(3)
+        base4 = body * wp.int32(4)
+        qw = q[base4 + 0]
+        qx = q[base4 + 1]
+        qy = q[base4 + 2]
+        qz = q[base4 + 3]
+        vx = reference_x[i]
+        vy = reference_y[i]
+        vz = reference_z[i]
+        tx = wp.float64(2.0) * (qy * vz - qz * vy)
+        ty = wp.float64(2.0) * (qz * vx - qx * vz)
+        tz = wp.float64(2.0) * (qx * vy - qy * vx)
+        rx = vx + qw * tx + (qy * tz - qz * ty)
+        ry = vy + qw * ty + (qz * tx - qx * tz)
+        rz = vz + qw * tz + (qx * ty - qy * tx)
         wx = omega[base + 0]
         wy = omega[base + 1]
         wz = omega[base + 2]
@@ -1355,9 +1432,9 @@ if wp is not None:
         u[i] = wp.float32(ui)
         v[i] = wp.float32(vi)
         w[i] = wp.float32(wi)
-        x[i] = x0[i] + wp.float32(dt_factor * ui)
-        y[i] = y0[i] + wp.float32(dt_factor * vi)
-        z[i] = z0[i] + wp.float32(dt_factor * wi)
+        x[i] = wp.float32(cm0[base + 0] + dt_factor * vc[base + 0] + rx)
+        y[i] = wp.float32(cm0[base + 1] + dt_factor * vc[base + 1] + ry)
+        z[i] = wp.float32(cm0[base + 2] + dt_factor * vc[base + 2] + rz)
 
 
     @wp.kernel
@@ -1432,6 +1509,190 @@ if wp is not None:
         fz[i] = m[i] * gz
 
 
+    @wp.kernel
+    def _rigid_plane_contact_f32(
+            x: wp.array(dtype=wp.float32),
+            y: wp.array(dtype=wp.float32),
+            z: wp.array(dtype=wp.float32),
+            u: wp.array(dtype=wp.float32),
+            v: wp.array(dtype=wp.float32),
+            w: wp.array(dtype=wp.float32),
+            m: wp.array(dtype=wp.float32),
+            fx: wp.array(dtype=wp.float32),
+            fy: wp.array(dtype=wp.float32),
+            fz: wp.array(dtype=wp.float32),
+            contact_fx: wp.array(dtype=wp.float32),
+            contact_fy: wp.array(dtype=wp.float32),
+            contact_fz: wp.array(dtype=wp.float32),
+            penetration: wp.array(dtype=wp.float32),
+            contact_impulse_x: wp.array(dtype=wp.float32),
+            contact_impulse_y: wp.array(dtype=wp.float32),
+            contact_impulse_z: wp.array(dtype=wp.float32),
+            max_penetration_history: wp.array(dtype=wp.float32),
+            xmin: wp.float32, xmax: wp.float32,
+            ymin: wp.float32, ymax: wp.float32,
+            zmin: wp.float32, zmax: wp.float32,
+            radius: wp.float32, stiffness: wp.float32,
+            damping_ratio: wp.float32, friction: wp.float32,
+            impulse_dt: wp.float32,
+    ):
+        i = wp.tid()
+        cfx = wp.float32(0.0)
+        cfy = wp.float32(0.0)
+        cfz = wp.float32(0.0)
+        max_penetration = wp.float32(0.0)
+        damping = wp.float32(2.0) * damping_ratio * wp.sqrt(stiffness * m[i])
+        for plane in range(6):
+            nx = wp.float32(0.0)
+            ny = wp.float32(0.0)
+            nz = wp.float32(0.0)
+            gap = wp.float32(0.0)
+            if plane == 0:
+                gap = x[i] - xmin
+                nx = wp.float32(1.0)
+            elif plane == 1:
+                gap = xmax - x[i]
+                nx = wp.float32(-1.0)
+            elif plane == 2:
+                gap = y[i] - ymin
+                ny = wp.float32(1.0)
+            elif plane == 3:
+                gap = ymax - y[i]
+                ny = wp.float32(-1.0)
+            elif plane == 4:
+                gap = z[i] - zmin
+                nz = wp.float32(1.0)
+            else:
+                gap = zmax - z[i]
+                nz = wp.float32(-1.0)
+            max_penetration = wp.max(max_penetration, -gap)
+            overlap = radius - gap
+            if overlap > wp.float32(0.0):
+                vn = u[i] * nx + v[i] * ny + w[i] * nz
+                normal_force = wp.max(
+                    wp.float32(0.0), stiffness * overlap - damping * vn
+                )
+                tx = u[i] - vn * nx
+                ty = v[i] - vn * ny
+                tz = w[i] - vn * nz
+                tangential_speed = wp.sqrt(tx * tx + ty * ty + tz * tz)
+                tangential_force = wp.min(
+                    wp.float32(0.5) * damping * tangential_speed,
+                    friction * normal_force,
+                )
+                scale = wp.float32(0.0)
+                if tangential_speed > wp.float32(1.0e-20):
+                    scale = -tangential_force / tangential_speed
+                cfx += normal_force * nx + scale * tx
+                cfy += normal_force * ny + scale * ty
+                cfz += normal_force * nz + scale * tz
+        fx[i] += cfx
+        fy[i] += cfy
+        fz[i] += cfz
+        contact_fx[i] = cfx
+        contact_fy[i] = cfy
+        contact_fz[i] = cfz
+        penetration[i] = wp.max(wp.float32(0.0), max_penetration)
+        contact_impulse_x[i] += impulse_dt * cfx
+        contact_impulse_y[i] += impulse_dt * cfy
+        contact_impulse_z[i] += impulse_dt * cfz
+        max_penetration_history[i] = wp.max(
+            max_penetration_history[i], penetration[i]
+        )
+
+
+    @wp.kernel
+    def _rigid_plane_contact_f64(
+            x: wp.array(dtype=wp.float64),
+            y: wp.array(dtype=wp.float64),
+            z: wp.array(dtype=wp.float64),
+            u: wp.array(dtype=wp.float64),
+            v: wp.array(dtype=wp.float64),
+            w: wp.array(dtype=wp.float64),
+            m: wp.array(dtype=wp.float64),
+            fx: wp.array(dtype=wp.float64),
+            fy: wp.array(dtype=wp.float64),
+            fz: wp.array(dtype=wp.float64),
+            contact_fx: wp.array(dtype=wp.float64),
+            contact_fy: wp.array(dtype=wp.float64),
+            contact_fz: wp.array(dtype=wp.float64),
+            penetration: wp.array(dtype=wp.float64),
+            contact_impulse_x: wp.array(dtype=wp.float64),
+            contact_impulse_y: wp.array(dtype=wp.float64),
+            contact_impulse_z: wp.array(dtype=wp.float64),
+            max_penetration_history: wp.array(dtype=wp.float64),
+            xmin: wp.float64, xmax: wp.float64,
+            ymin: wp.float64, ymax: wp.float64,
+            zmin: wp.float64, zmax: wp.float64,
+            radius: wp.float64, stiffness: wp.float64,
+            damping_ratio: wp.float64, friction: wp.float64,
+            impulse_dt: wp.float64,
+    ):
+        i = wp.tid()
+        cfx = wp.float64(0.0)
+        cfy = wp.float64(0.0)
+        cfz = wp.float64(0.0)
+        max_penetration = wp.float64(0.0)
+        damping = wp.float64(2.0) * damping_ratio * wp.sqrt(stiffness * m[i])
+        for plane in range(6):
+            nx = wp.float64(0.0)
+            ny = wp.float64(0.0)
+            nz = wp.float64(0.0)
+            gap = wp.float64(0.0)
+            if plane == 0:
+                gap = x[i] - xmin
+                nx = wp.float64(1.0)
+            elif plane == 1:
+                gap = xmax - x[i]
+                nx = wp.float64(-1.0)
+            elif plane == 2:
+                gap = y[i] - ymin
+                ny = wp.float64(1.0)
+            elif plane == 3:
+                gap = ymax - y[i]
+                ny = wp.float64(-1.0)
+            elif plane == 4:
+                gap = z[i] - zmin
+                nz = wp.float64(1.0)
+            else:
+                gap = zmax - z[i]
+                nz = wp.float64(-1.0)
+            max_penetration = wp.max(max_penetration, -gap)
+            overlap = radius - gap
+            if overlap > wp.float64(0.0):
+                vn = u[i] * nx + v[i] * ny + w[i] * nz
+                normal_force = wp.max(
+                    wp.float64(0.0), stiffness * overlap - damping * vn
+                )
+                tx = u[i] - vn * nx
+                ty = v[i] - vn * ny
+                tz = w[i] - vn * nz
+                tangential_speed = wp.sqrt(tx * tx + ty * ty + tz * tz)
+                tangential_force = wp.min(
+                    wp.float64(0.5) * damping * tangential_speed,
+                    friction * normal_force,
+                )
+                scale = wp.float64(0.0)
+                if tangential_speed > wp.float64(1.0e-30):
+                    scale = -tangential_force / tangential_speed
+                cfx += normal_force * nx + scale * tx
+                cfy += normal_force * ny + scale * ty
+                cfz += normal_force * nz + scale * tz
+        fx[i] += cfx
+        fy[i] += cfy
+        fz[i] += cfz
+        contact_fx[i] = cfx
+        contact_fy[i] = cfy
+        contact_fz[i] = cfz
+        penetration[i] = wp.max(wp.float64(0.0), max_penetration)
+        contact_impulse_x[i] += impulse_dt * cfx
+        contact_impulse_y[i] += impulse_dt * cfy
+        contact_impulse_z[i] += impulse_dt * cfz
+        max_penetration_history[i] = wp.max(
+            max_penetration_history[i], penetration[i]
+        )
+
+
 if wp is not None:
     # Device wp.func objects referenced by generated group kernels. Seeded into
     # the generated kernels' namespace so Warp can resolve them (ADR-0003).
@@ -1472,6 +1733,77 @@ class ContinuityEquation(WarpEquation):
         return (
             "        _acc_arho += s_m[j] * (vijx*(grad*dx) + vijy*(grad*dy)"
             " + vijz*(grad*dz))"
+        )
+
+
+class GradHCorrection(WarpEquation):
+    """Destination-kernel variable-``h`` partition factor.
+
+    This is the conservative grad-h ``beta`` factor used by the adaptive SPH
+    reference, evaluated at the destination smoothing length. A separate
+    finalizing sibling handles isolated particles after contributions from
+    every source array have accumulated.
+    """
+    src_arrays = ('m',)
+    dst_arrays = ('rho',)
+    out_arrays = ('beta_h',)
+    scalars = ('dim_inv',)
+    requires = ('rij2', 'gradi')
+
+    def loop(self):
+        return (
+            "        _acc_beta_h += -s_m[j] * rij2 * gradi * dim_inv"
+            " / d_rho[i]"
+        )
+
+
+class GradHCorrectionFinalize(GradHCorrection):
+    """Last-source grad-h accumulation with a safe isolated-particle value."""
+
+    def post_loop(self):
+        return (
+            "    if wp.abs(d_beta_h[i]) < TYPE(1.0e-8):\n"
+            "        d_beta_h[i] = TYPE(1.0)"
+        )
+
+
+class VariableHContinuityEquation(WarpEquation):
+    """Destination-``h`` continuity divided by its grad-h factor."""
+    src_arrays = ('m',)
+    dst_arrays = ('beta_h',)
+    out_arrays = ('arho',)
+    requires = ('dx', 'dy', 'dz', 'gradi', 'vijx', 'vijy', 'vijz')
+
+    def loop(self):
+        return (
+            "        vh_div_ = TYPE(1.0) / d_beta_h[i]\n"
+            "        _acc_arho += s_m[j] * vh_div_"
+            " * (vijx*(gradi*dx) + vijy*(gradi*dy) + vijz*(gradi*dz))"
+        )
+
+
+class VariableHPressureGradient(WarpEquation):
+    """Pair-conservative pressure force with separate ``h_i``/``h_j`` terms."""
+    src_arrays = ('m', 'rho', 'p', 'beta_h')
+    dst_arrays = ('rho', 'p', 'beta_h')
+    out_arrays = ('au', 'av', 'aw')
+    requires = ('dx', 'dy', 'dz', 'gradi', 'gradj')
+
+    def initialize(self):
+        return (
+            "    vh_rhoi21_ = TYPE(1.0) / (d_rho[i] * d_rho[i])\n"
+            "    vh_tmpi_ = d_p[i] * vh_rhoi21_ / d_beta_h[i]"
+        )
+
+    def loop(self):
+        return (
+            "        vh_rhoj21_ = TYPE(1.0) / (s_rho[j] * s_rho[j])\n"
+            "        vh_pg_ = vh_tmpi_ * gradi"
+            " + s_p[j] * vh_rhoj21_ * gradj / s_beta_h[j]\n"
+            "        vh_fac_ = -s_m[j] * vh_pg_\n"
+            "        _acc_au += vh_fac_ * dx\n"
+            "        _acc_av += vh_fac_ * dy\n"
+            "        _acc_aw += vh_fac_ * dz"
         )
 
 
@@ -1590,6 +1922,44 @@ class LiuBodyReaction(WarpEquation):
         )
 
 
+class VariableHLiuFluidAcceleration(WarpEquation):
+    """Liu acceleration with separate fluid/solid smoothing gradients."""
+    src_arrays = ('m', 'p', 'rho', 'beta_h')
+    dst_arrays = ('p', 'rho', 'beta_h')
+    out_arrays = ('au', 'av', 'aw')
+    requires = ('dx', 'dy', 'dz', 'gradi', 'gradj')
+
+    def loop(self):
+        return (
+            "        vhliu_t1_ = "
+            "s_p[j] * gradj / (s_beta_h[j] * s_rho[j] * s_rho[j]) + "
+            "d_p[i] * gradi / (d_beta_h[i] * d_rho[i] * d_rho[i])\n"
+            "        vhliu_fac_ = -s_m[j] * vhliu_t1_\n"
+            "        _acc_au += vhliu_fac_ * dx\n"
+            "        _acc_av += vhliu_fac_ * dy\n"
+            "        _acc_aw += vhliu_fac_ * dz"
+        )
+
+
+class VariableHLiuBodyReaction(WarpEquation):
+    """Equal reaction to :class:`VariableHLiuFluidAcceleration`."""
+    src_arrays = ('m', 'p', 'rho', 'beta_h')
+    dst_arrays = ('m', 'p', 'rho', 'beta_h')
+    out_arrays = ('fx', 'fy', 'fz')
+    requires = ('dx', 'dy', 'dz', 'gradi', 'gradj')
+
+    def loop(self):
+        return (
+            "        vhliur_t1_ = "
+            "d_p[i] * gradi / (d_beta_h[i] * d_rho[i] * d_rho[i]) + "
+            "s_p[j] * gradj / (s_beta_h[j] * s_rho[j] * s_rho[j])\n"
+            "        vhliur_fac_ = -d_m[i] * s_m[j] * vhliur_t1_\n"
+            "        _acc_fx += vhliur_fac_ * dx\n"
+            "        _acc_fy += vhliur_fac_ * dy\n"
+            "        _acc_fz += vhliur_fac_ * dz"
+        )
+
+
 # The fused continuity-density acceleration group: pressure gradient, then
 # Monaghan viscosity (both into au/av/aw), continuity (arho), XSPH (ax/ay/az).
 # Block order fixes the per-pair accumulation order for the shared au/av/aw
@@ -1609,6 +1979,12 @@ _WCSPH_CONTINUITY_BLOCKS = (
 # the single-array fused group above.
 _WCSPH_DAM_BREAK_FLUID_BLOCKS = (
     PressureGradient(), ArtificialViscosity(), ContinuityEquation(),
+)
+
+# Adaptive-only sibling.  The uniform blocks above remain byte-identical.
+_WCSPH_APR_DAM_BREAK_FLUID_BLOCKS = (
+    VariableHPressureGradient(), ArtificialViscosity(),
+    VariableHContinuityEquation(),
 )
 
 
@@ -1722,6 +2098,17 @@ def _ensure_warp_helper(pa, device):
 def _ensure_property(pa, prop, device):
     if prop not in pa.properties:
         pa.add_property(prop)
+        if pa.gpu is not None and getattr(pa.gpu, 'backend', None) == 'warp':
+            pa.gpu.add_prop(prop, pa.properties[prop])
+    _ensure_warp_helper(pa, device)
+
+
+def _ensure_unit_property(pa, prop, device):
+    """Ensure a scalar property exists with unit host/device values."""
+    if prop not in pa.properties:
+        pa.add_property(
+            prop, data=np.ones(pa.get_number_of_particles(), dtype=np.float64)
+        )
         if pa.gpu is not None and getattr(pa.gpu, 'backend', None) == 'warp':
             pa.gpu.add_prop(prop, pa.properties[prop])
     _ensure_warp_helper(pa, device)
@@ -2472,7 +2859,8 @@ def _rigid_finalize_moments(mi, omega=None, nbody=1):
 class WarpRigidBodyState:
     """Persistent compact device state for ADR-0006 rigid-body stepping."""
 
-    def __init__(self, pa, nbody=1, vc=None, omega=None, device=None):
+    def __init__(self, pa, nbody=1, vc=None, omega=None, q=None,
+                 reference_xyz=None, device=None):
         if wp is None:  # pragma: no cover
             raise ImportError("warp is required for WarpRigidBodyState")
         if nbody < 1:
@@ -2498,6 +2886,7 @@ class WarpRigidBodyState:
         xyz = np.column_stack((np.asarray(pa.x, dtype=np.float64),
                                np.asarray(pa.y, dtype=np.float64),
                                np.asarray(pa.z, dtype=np.float64)))
+        reference = np.zeros_like(xyz)
         for body in range(self.nbody):
             selected = body_id == body
             if not np.any(selected) or mass[selected].sum() <= 0.0:
@@ -2506,6 +2895,7 @@ class WarpRigidBodyState:
             rb = xyz[selected]
             center = (mb[:, None] * rb).sum(axis=0) / mb.sum()
             rel = rb - center
+            reference[selected] = rel
             inertia = np.eye(3) * np.sum(mb * np.sum(rel * rel, axis=1))
             inertia -= np.einsum('n,ni,nj->ij', mb, rel, rel)
             scale = float(np.linalg.norm(inertia, ord=np.inf))
@@ -2513,6 +2903,16 @@ class WarpRigidBodyState:
                     1.0e-14 * scale ** 3):
                 raise ValueError(f"rigid body {body} has singular inertia")
         self.body_id = wp.array(body_id, dtype=wp.int32, device=self.device)
+        if reference_xyz is not None:
+            reference = np.asarray(reference_xyz, dtype=np.float64)
+            if reference.shape != xyz.shape:
+                raise ValueError("reference_xyz must have shape (particles, 3)")
+        self.reference_x = wp.array(
+            reference[:, 0], dtype=wp.float64, device=self.device)
+        self.reference_y = wp.array(
+            reference[:, 1], dtype=wp.float64, device=self.device)
+        self.reference_z = wp.array(
+            reference[:, 2], dtype=wp.float64, device=self.device)
 
         def body_vector(value):
             if value is None:
@@ -2530,6 +2930,8 @@ class WarpRigidBodyState:
                                    device=self.device)
         self.cm = wp.zeros(self.nbody * 3, dtype=wp.float64,
                            device=self.device)
+        self.cm0 = wp.zeros(self.nbody * 3, dtype=wp.float64,
+                            device=self.device)
         self.inertia = wp.zeros(self.nbody * 9, dtype=wp.float64,
                                 device=self.device)
         self.force = wp.zeros(self.nbody * 3, dtype=wp.float64,
@@ -2546,16 +2948,30 @@ class WarpRigidBodyState:
                             device=self.device)
         self.omega0 = wp.zeros(self.nbody * 3, dtype=wp.float64,
                                device=self.device)
+        if q is None:
+            q = np.zeros((self.nbody, 4), dtype=np.float64)
+            q[:, 0] = 1.0
+        q = np.asarray(q, dtype=np.float64)
+        if q.size != self.nbody * 4:
+            raise ValueError("rigid orientations must have shape (nbody, 4)")
+        q = q.reshape(-1, 4)
+        q /= np.linalg.norm(q, axis=1)[:, None]
+        self.q = wp.array(q.reshape(-1), dtype=wp.float64,
+                          device=self.device)
+        self.q0 = wp.zeros(self.nbody * 4, dtype=wp.float64,
+                           device=self.device)
         self.error = wp.zeros(self.nbody, dtype=wp.int32, device=self.device)
 
 
-def create_rigid_body_state(pa, nbody=1, vc=None, omega=None, device=None):
+def create_rigid_body_state(pa, nbody=1, vc=None, omega=None, q=None,
+                            reference_xyz=None, device=None):
     """Create reusable device buffers for one or more rigid bodies."""
     device = wp.get_device(device)
     for prop in ('x0', 'y0', 'z0', 'u', 'v', 'w', 'fx', 'fy', 'fz'):
         _ensure_property(pa, prop, device)
-    return WarpRigidBodyState(pa, nbody=nbody, vc=vc, omega=omega,
-                              device=device)
+    return WarpRigidBodyState(
+        pa, nbody=nbody, vc=vc, omega=omega, q=q,
+        reference_xyz=reference_xyz, device=device)
 
 
 def _launch_rigid_moment_reduction(pa, mi, body_id_dev, device, push=False):
@@ -2598,6 +3014,7 @@ def compute_rigid_body_moments_device(pa, state, push=False):
 
 def save_rigid_body_state(pa, state, push=False):
     """Save the start-of-step particle and compact body state on the device."""
+    compute_rigid_body_moments_device(pa, state, push=push)
     gpu = pa.gpu
     if push:
         gpu.push('x', 'y', 'z', 'x0', 'y0', 'z0')
@@ -2614,8 +3031,13 @@ def save_rigid_body_state(pa, state, push=False):
         )
     wp.launch(
         _rigid_save_body_state, dim=state.nbody * 3,
-        inputs=[state.vc, state.omega, state.vc0, state.omega0],
+        inputs=[state.cm, state.vc, state.omega, state.cm0,
+                state.vc0, state.omega0],
         device=state.device,
+    )
+    wp.launch(
+        _rigid_save_orientation, dim=state.nbody * 4,
+        inputs=[state.q, state.q0], device=state.device,
     )
     return state
 
@@ -2634,6 +3056,11 @@ def rigid_body_rk2_stage(pa, state, dt, stage, push=False):
     gpu = pa.gpu
     n = gpu.get_number_of_particles()
     dt_factor = np.float64(dt * stage)
+    wp.launch(
+        _rigid_orientation_stage, dim=state.nbody,
+        inputs=[state.q0, state.omega, state.q, dt_factor],
+        device=state.device,
+    )
     if n > 0:
         kernel = (_rigid_motion_stage_f32
                   if gpu.x.dtype == np.float32
@@ -2641,8 +3068,9 @@ def rigid_body_rk2_stage(pa, state, dt, stage, push=False):
         wp.launch(
             kernel, dim=n,
             inputs=[
-                state.body_id, state.cm, state.vc, state.omega,
-                gpu.x0.dev, gpu.y0.dev, gpu.z0.dev,
+                state.body_id,
+                state.reference_x, state.reference_y, state.reference_z,
+                state.q, state.cm0, state.vc, state.omega,
                 gpu.x.dev, gpu.y.dev, gpu.z.dev,
                 gpu.u.dev, gpu.v.dev, gpu.w.dev, dt_factor,
             ],
@@ -2722,8 +3150,73 @@ def initialize_rigid_body_force(pa, gx=0.0, gy=0.0, gz=-9.81,
     return gpu.fx, gpu.fy, gpu.fz
 
 
+def apply_rigid_plane_contact(
+        pa, bounds, radius, stiffness=5.0e4, restitution=0.3,
+        friction=0.2, impulse_dt=0.0, device=None, push=False):
+    """Add spring-dashpot/Coulomb contact against an axis-aligned tank.
+
+    ``bounds`` are the six inner wall planes ``(xmin, xmax, ymin, ymax,
+    zmin, zmax)``. Contact is evaluated independently per rigid surface
+    particle, so the existing deterministic f64 body-moment reduction consumes
+    the resulting forces without source atomics.
+    """
+    if wp is None:  # pragma: no cover
+        raise ImportError("warp is required for apply_rigid_plane_contact")
+    bounds = tuple(float(value) for value in bounds)
+    if len(bounds) != 6:
+        raise ValueError("contact bounds require six values")
+    if not (bounds[0] < bounds[1] and bounds[2] < bounds[3]
+            and bounds[4] < bounds[5]):
+        raise ValueError("contact bounds must be increasing")
+    if radius < 0.0 or stiffness <= 0.0 or friction < 0.0:
+        raise ValueError("contact radius/friction must be nonnegative and stiffness positive")
+    if restitution <= 0.0 or restitution > 1.0:
+        raise ValueError("contact restitution must be in (0, 1]")
+    log_e = np.log(float(restitution))
+    damping_ratio = -log_e / np.sqrt(np.pi * np.pi + log_e * log_e)
+    device = wp.get_device(device)
+    props = (
+        'x', 'y', 'z', 'u', 'v', 'w', 'm', 'fx', 'fy', 'fz',
+        'contact_fx', 'contact_fy', 'contact_fz', 'penetration',
+        'contact_impulse_x', 'contact_impulse_y', 'contact_impulse_z',
+        'max_penetration_history',
+    )
+    for prop in props:
+        _ensure_property(pa, prop, device)
+    if push:
+        pa.gpu.push(*props)
+    gpu = pa.gpu
+    n = gpu.get_number_of_particles()
+    if n > 0:
+        arrays = [gpu.get_device_array(name).dev for name in props]
+        if gpu.x.dtype == np.float32:
+            kernel = _rigid_plane_contact_f32
+            scalars = [np.float32(value) for value in (
+                *bounds, radius, stiffness, damping_ratio, friction,
+                impulse_dt,
+            )]
+        else:
+            kernel = _rigid_plane_contact_f64
+            scalars = [np.float64(value) for value in (
+                *bounds, radius, stiffness, damping_ratio, friction,
+                impulse_dt,
+            )]
+        wp.launch(kernel, dim=n, inputs=arrays + scalars, device=device)
+    return gpu.penetration
+
+
+def rigid_contact_timestep(pa, stiffness=5.0e4, safety=0.2):
+    """Conservative explicit timestep from the lightest contact particle."""
+    if stiffness <= 0.0 or safety <= 0.0:
+        raise ValueError("contact stiffness and timestep safety must be positive")
+    mass = np.asarray(pa.m, dtype=np.float64)
+    if mass.size == 0 or np.min(mass) <= 0.0:
+        raise ValueError("contact particles must have positive mass")
+    return float(safety * np.sqrt(np.min(mass) / float(stiffness)))
+
+
 def compute_rigid_number_density(nnps, rigid_index, kernel='wendland',
-                                 push=False):
+                                 push=False, neighbor_mode='grid'):
     """Compute the static rigid self-neighbor ``V = sum W`` pre-pass."""
     rigid_index = int(rigid_index)
     pa = nnps.particles[rigid_index]
@@ -2733,12 +3226,47 @@ def compute_rigid_number_density(nnps, rigid_index, kernel='wendland',
         nnps.update(push=False)
     _run_equation_group(
         nnps, rigid_index, rigid_index, [RigidNumberDensity()],
-        kernel=kernel, neighbor_mode='grid')
+        kernel=kernel, neighbor_mode=neighbor_mode)
     return pa.gpu.V
 
 
+def compute_variable_h_beta(nnps, fluid_index, source_indices, kernel='wendland',
+                            push=False, neighbor_mode='multilevel'):
+    """Compute the adaptive fluid's conservative grad-h partition factor.
+
+    Contributions from every fluid/solid source are accumulated before the
+    final isolated-particle guard. The factor uses the destination smoothing
+    length; its pressure sibling combines separate destination/source
+    gradients while retaining pairwise conservation (ADR-0011).
+    """
+    fluid_index = int(fluid_index)
+    source_indices = tuple(int(index) for index in source_indices)
+    if not source_indices:
+        raise ValueError("variable-h beta requires at least one source array")
+    fluid = nnps.particles[fluid_index]
+    _ensure_property(fluid, 'beta_h', nnps.device)
+    if push:
+        fluid.gpu.push('x', 'y', 'z', 'h', 'm', 'rho', 'beta_h')
+        nnps.update(push=False)
+    for position, source_index in enumerate(source_indices):
+        block = (
+            GradHCorrectionFinalize()
+            if position == len(source_indices) - 1
+            else GradHCorrection()
+        )
+        _run_equation_group(
+            nnps, source_index, fluid_index, [block],
+            scalar_values={'dim_inv': 1.0 / float(nnps.dim)},
+            kernel=kernel, neighbor_mode=neighbor_mode,
+            accumulate_outputs=position > 0,
+        )
+    return fluid.gpu.beta_h
+
+
 def compute_liu_fluid_rigid_coupling(nnps, fluid_index, rigid_index,
-                                     kernel='wendland', push=False):
+                                     kernel='wendland', push=False,
+                                     neighbor_mode='grid',
+                                     variable_h_correction=False):
     """Apply deterministic two-pass Liu fluid/rigid pressure coupling."""
     fluid_index = int(fluid_index)
     rigid_index = int(rigid_index)
@@ -2748,18 +3276,30 @@ def compute_liu_fluid_rigid_coupling(nnps, fluid_index, rigid_index,
         _ensure_property(fluid, prop, nnps.device)
     for prop in ('rho', 'p', 'fx', 'fy', 'fz'):
         _ensure_property(rigid, prop, nnps.device)
+    if variable_h_correction:
+        _ensure_unit_property(fluid, 'beta_h', nnps.device)
+        _ensure_unit_property(rigid, 'beta_h', nnps.device)
     if push:
         fluid.gpu.push('x', 'y', 'z', 'h', 'm', 'rho', 'p',
                        'au', 'av', 'aw')
         rigid.gpu.push('x', 'y', 'z', 'h', 'm', 'rho', 'p',
                        'fx', 'fy', 'fz')
+        if variable_h_correction:
+            fluid.gpu.push('beta_h')
+            rigid.gpu.push('beta_h')
         nnps.update(push=False)
+    if variable_h_correction:
+        fluid_block = VariableHLiuFluidAcceleration()
+        reaction_block = VariableHLiuBodyReaction()
+    else:
+        fluid_block = LiuFluidAcceleration()
+        reaction_block = LiuBodyReaction()
     _run_equation_group(
-        nnps, rigid_index, fluid_index, [LiuFluidAcceleration()],
-        kernel=kernel, neighbor_mode='grid', accumulate_outputs=True)
+        nnps, rigid_index, fluid_index, [fluid_block], kernel=kernel,
+        neighbor_mode=neighbor_mode, accumulate_outputs=True)
     _run_equation_group(
-        nnps, fluid_index, rigid_index, [LiuBodyReaction()],
-        kernel=kernel, neighbor_mode='grid', accumulate_outputs=True)
+        nnps, fluid_index, rigid_index, [reaction_block], kernel=kernel,
+        neighbor_mode=neighbor_mode, accumulate_outputs=True)
     return fluid.gpu.au, rigid.gpu.fx
 
 
@@ -3164,7 +3704,8 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
                           adaptive_dt=False, cfl=0.25, dt_min=0.0,
                           dt_max=np.inf, adaptive_dt_scale=1.0,
                           step_dt_max=np.inf, push=False, return_dt=False,
-                          neighbor_mode='grid'):
+                          neighbor_mode='grid',
+                          variable_h_correction=False):
     """One 3D dam-break WCSPH continuity-density PEC step (ADR-0005).
 
     Multi-array: the fluid's acceleration and density rate sum over the fluid
@@ -3201,6 +3742,10 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
     for pa in arrays:
         for prop in ('rho', 'p', 'cs') + out_props:
             _ensure_property(pa, prop, device)
+    if variable_h_correction:
+        _ensure_property(fluid, 'beta_h', device)
+        for solid in solids:
+            _ensure_unit_property(solid, 'beta_h', device)
     if push:
         for pa in arrays:
             pa.gpu.push('x', 'y', 'z', 'h', 'm', 'rho', 'p', 'cs',
@@ -3217,15 +3762,24 @@ def wc_sph_dam_break_step(nnps, fluid_index=0, solid_indices=(1,), dt=1.0e-4,
         for s in solids:
             compute_tait_eos_hg_correction(s, rho0=rho0, c0=c0, gamma=gamma,
                                             device=device, push=False)
+        if variable_h_correction:
+            compute_variable_h_beta(
+                nnps, fluid_index, sources_for_fluid, kernel=kernel,
+                push=False, neighbor_mode=neighbor_mode,
+            )
         # Zero accumulators (walls keep zero accel -> they stay fixed).
         for pa in arrays:
             _zero_device_props(pa, out_props)
         # Fluid: pressure + Monaghan AV + continuity summed over fluid + walls,
         # fused into ONE kernel per source (single neighbour walk / single
         # per-pair geometry for all three blocks instead of three).
+        fluid_blocks = (
+            _WCSPH_APR_DAM_BREAK_FLUID_BLOCKS
+            if variable_h_correction else _WCSPH_DAM_BREAK_FLUID_BLOCKS
+        )
         for s_index in sources_for_fluid:
             _run_equation_group(nnps, s_index, fluid_index,
-                                list(_WCSPH_DAM_BREAK_FLUID_BLOCKS),
+                                list(fluid_blocks),
                                 scalar_values={'alpha': alpha, 'beta': beta},
                                 kernel=kernel, neighbor_mode=neighbor_mode,
                                 accumulate_outputs=True)
@@ -3279,12 +3833,18 @@ def wc_sph_dam_break_rigid_step(
         gamma=7.0, kernel='wendland', xsph_eps=0.5, gx=0.0, gy=0.0,
         gz=-9.81, adaptive_dt=False, cfl=0.25, dt_min=0.0,
         dt_max=np.inf, adaptive_dt_scale=1.0, step_dt_max=np.inf,
-        push=False, return_dt=False):
+        push=False, return_dt=False, neighbor_mode='grid',
+        contact_bounds=None, contact_radius=0.0, contact_stiffness=5.0e4,
+        contact_restitution=0.3, contact_friction=0.2,
+        contact_dt_safety=0.2, variable_h_correction=False):
     """One EPEC WCSPH step with deterministic Liu rigid coupling (ADR-0006).
 
     This is a sibling of :func:`wc_sph_dam_break_step`; fixed walls use the
     existing PEC path while the rigid array is advanced only by its density
-    stage and device-resident 6-DOF RK2 state.
+    stage and device-resident 6-DOF RK2 state. ``neighbor_mode='multilevel'``
+    routes the same equation blocks through ``MultilevelGridWarpNNPS`` so the
+    rigid path can consume adaptively refined fluid without a flat neighbor
+    cache or a separate force formulation.
     """
     if wp is None:  # pragma: no cover
         raise ImportError("warp is required for wc_sph_dam_break_rigid_step")
@@ -3301,6 +3861,7 @@ def wc_sph_dam_break_rigid_step(
     use_xsph = xsph_eps is not None and xsph_eps != 0.0
     eps = 0.0 if xsph_eps is None else xsph_eps
     out_props = ('au', 'av', 'aw', 'arho', 'ax', 'ay', 'az')
+    use_contact = contact_bounds is not None
 
     for pa in fixed_arrays:
         for prop in ('rho', 'p', 'cs') + out_props:
@@ -3308,6 +3869,10 @@ def wc_sph_dam_break_rigid_step(
     for prop in ('rho', 'rho0', 'p', 'cs', 'arho', 'V',
                  'fx', 'fy', 'fz', 'u', 'v', 'w'):
         _ensure_property(rigid, prop, device)
+    if variable_h_correction:
+        _ensure_property(fluid, 'beta_h', device)
+        for wall in walls:
+            _ensure_unit_property(wall, 'beta_h', device)
     if push:
         for pa in fixed_arrays:
             pa.gpu.push('x', 'y', 'z', 'h', 'm', 'rho', 'p', 'cs',
@@ -3318,7 +3883,8 @@ def wc_sph_dam_break_rigid_step(
 
     if not getattr(rigid_state, 'number_density_initialized', False):
         compute_rigid_number_density(
-            nnps, rigid_index, kernel=kernel, push=False)
+            nnps, rigid_index, kernel=kernel, push=False,
+            neighbor_mode=neighbor_mode)
         rigid_state.number_density_initialized = True
 
     for pa in fixed_arrays:
@@ -3326,7 +3892,7 @@ def wc_sph_dam_break_rigid_step(
     save_rigid_body_density(rigid, device=device, push=False)
     save_rigid_body_state(rigid, rigid_state, push=False)
 
-    def accel():
+    def accel(contact_impulse_dt=0.0):
         compute_tait_eos(fluid, rho0=rho0, c0=c0, gamma=gamma, p0=p0,
                          device=device, push=False)
         for wall in walls:
@@ -3336,6 +3902,11 @@ def wc_sph_dam_break_rigid_step(
         compute_tait_eos_hg_correction(
             rigid, rho0=rho0, c0=c0, gamma=gamma,
             device=device, push=False)
+        if variable_h_correction:
+            compute_variable_h_beta(
+                nnps, fluid_index, fixed_sources + [rigid_index],
+                kernel=kernel, push=False, neighbor_mode=neighbor_mode,
+            )
 
         for pa in fixed_arrays:
             _zero_device_props(pa, out_props)
@@ -3345,32 +3916,51 @@ def wc_sph_dam_break_rigid_step(
 
         # Existing fluid + fixed-wall physics. The rigid body is deliberately
         # excluded from this fused block so its continuity is not double-counted.
+        fluid_blocks = (
+            _WCSPH_APR_DAM_BREAK_FLUID_BLOCKS
+            if variable_h_correction else _WCSPH_DAM_BREAK_FLUID_BLOCKS
+        )
         for src_index in fixed_sources:
             _run_equation_group(
                 nnps, src_index, fluid_index,
-                list(_WCSPH_DAM_BREAK_FLUID_BLOCKS),
+                list(fluid_blocks),
                 scalar_values={'alpha': alpha, 'beta': beta}, kernel=kernel,
-                neighbor_mode='grid', accumulate_outputs=True)
+                neighbor_mode=neighbor_mode, accumulate_outputs=True)
         # Rigid contribution to fluid density exactly once, then pressure
         # acceleration + equal-and-opposite body force in deterministic passes.
         _run_equation_group(
-            nnps, rigid_index, fluid_index, [ContinuityEquation()],
-            kernel=kernel, neighbor_mode='grid', accumulate_outputs=True)
+            nnps, rigid_index, fluid_index,
+            [VariableHContinuityEquation()
+             if variable_h_correction else ContinuityEquation()],
+            kernel=kernel, neighbor_mode=neighbor_mode,
+            accumulate_outputs=True)
         compute_liu_fluid_rigid_coupling(
-            nnps, fluid_index, rigid_index, kernel=kernel, push=False)
+            nnps, fluid_index, rigid_index, kernel=kernel, push=False,
+            neighbor_mode=neighbor_mode,
+            variable_h_correction=variable_h_correction)
+        if use_contact:
+            apply_rigid_plane_contact(
+                rigid, contact_bounds, radius=contact_radius,
+                stiffness=contact_stiffness,
+                restitution=contact_restitution,
+                friction=contact_friction, impulse_dt=contact_impulse_dt,
+                device=device, push=False,
+            )
 
         if use_xsph:
             _run_equation_group(
                 nnps, fluid_index, fluid_index, [XSPHCorrection()],
                 scalar_values={'eps': eps}, kernel=kernel,
-                neighbor_mode='grid', accumulate_outputs=True)
+                neighbor_mode=neighbor_mode, accumulate_outputs=True)
         for wall_index in wall_indices:
             _run_equation_group(
                 nnps, fluid_index, wall_index, [ContinuityEquation()],
-                kernel=kernel, neighbor_mode='grid', accumulate_outputs=True)
+                kernel=kernel, neighbor_mode=neighbor_mode,
+                accumulate_outputs=True)
         _run_equation_group(
             nnps, fluid_index, rigid_index, [ContinuityEquation()],
-            kernel=kernel, neighbor_mode='grid', accumulate_outputs=True)
+            kernel=kernel, neighbor_mode=neighbor_mode,
+            accumulate_outputs=True)
         apply_body_force(fluid, gx=gx, gy=gy, gz=gz, dim=dim,
                          device=device, push=False)
 
@@ -3378,8 +3968,16 @@ def wc_sph_dam_break_rigid_step(
     if adaptive_dt:
         dt = compute_wcsph_adaptive_timestep(
             nnps, pa_index=fluid_index, c0=c0, cfl=cfl, dt_min=dt_min,
-            dt_max=dt_max, push=False, neighbor_mode='grid')
+            dt_max=dt_max, push=False, neighbor_mode=neighbor_mode)
         dt = min(float(dt) * float(adaptive_dt_scale), float(step_dt_max))
+    if use_contact:
+        dt = min(
+            float(dt),
+            rigid_contact_timestep(
+                rigid, stiffness=contact_stiffness,
+                safety=contact_dt_safety,
+            ),
+        )
     for pa in fixed_arrays:
         wcsph_pec_stage(pa, dt=dt, stage=0.5, dim=dim,
                         xsph=(use_xsph and pa is fluid), device=device,
@@ -3388,7 +3986,7 @@ def wc_sph_dam_break_rigid_step(
     rigid_body_rk2_stage(rigid, rigid_state, dt=dt, stage=0.5, push=False)
     nnps.update(push=False)
 
-    accel()
+    accel(contact_impulse_dt=dt)
     for pa in fixed_arrays:
         wcsph_pec_stage(pa, dt=dt, stage=1.0, dim=dim,
                         xsph=(use_xsph and pa is fluid), device=device,

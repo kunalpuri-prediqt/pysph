@@ -19,7 +19,7 @@ pytest.importorskip('warp')
 
 import warp as wp
 
-from pysph.base.kernels import CubicSpline
+from pysph.base.kernels import CubicSpline, Gaussian, WendlandQuintic
 from pysph.base.warp_codegen import (
     WarpEquation, build_group_kernel, clear_kernel_cache,
     generate_group_source,
@@ -55,6 +55,18 @@ class _KernelSum(WarpEquation):
 
     def loop(self):
         return "        _acc_wsum += wij"
+
+
+class _SeparateGradientSum(WarpEquation):
+    """Expose destination/source radial factors for a numerical oracle."""
+    out_arrays = ('gisum', 'gjsum')
+    requires = ('gradi', 'gradj')
+
+    def loop(self):
+        return (
+            "        _acc_gisum += gradi\n"
+            "        _acc_gjsum += gradj"
+        )
 
 
 def _launch_manual(group, arrays, dim, kernel_id, scalars=None):
@@ -147,6 +159,62 @@ def test_generated_kernel_calls_existing_device_wp_func():
     cpu = CubicSpline(dim=2)
     expected = cpu.kernel([r, 0.0, 0.0], r, 0.5 * (h + h))
     assert np.allclose(wsum, [expected, expected], rtol=1e-5, atol=1e-6)
+
+
+def test_separate_gradient_source_is_additive_to_uniform_pressure_source():
+    separate, src, dst, _, out = generate_group_source(
+        [_SeparateGradientSum()], np.float32)
+    assert src == ['x', 'y', 'z', 'h']
+    assert dst == ['x', 'y', 'z', 'h']
+    assert out == ['gisum', 'gjsum']
+    assert "rij, d_h[i], dim, kernel_id" in separate
+    assert "rij, s_h[j], dim, kernel_id" in separate
+
+    uniform, _, _, _, _ = generate_group_source(
+        [ws.PressureGradient()], np.float32)
+    assert 'gradi' not in uniform
+    assert 'gradj' not in uniform
+    assert uniform.count('_kernel_dwdq_f32(') == 1
+    assert "rij, hij, dim, kernel_id" in uniform
+
+
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+@pytest.mark.parametrize('kernel_id,kernel_type', [
+    (0, CubicSpline), (1, Gaussian), (2, WendlandQuintic),
+])
+def test_separate_gradients_match_pysph_for_unequal_supports(
+        dtype, kernel_id, kernel_type):
+    clear_kernel_cache()
+    group = build_group_kernel(
+        [_SeparateGradientSum()], dtype, ws._WARP_DEVICE_FUNCS)
+    r = 0.25
+    hi, hj = 0.10, 0.20
+    wp_dtype = wp.float32 if dtype == np.float32 else wp.float64
+    arrays = {
+        's_x': _arr([r], dtype), 's_y': _arr([0.0], dtype),
+        's_z': _arr([0.0], dtype), 's_h': _arr([hj], dtype),
+        'd_x': _arr([0.0], dtype), 'd_y': _arr([0.0], dtype),
+        'd_z': _arr([0.0], dtype), 'd_h': _arr([hi], dtype),
+        'starts': _arr([0], np.int32), 'lengths': _arr([1], np.int32),
+        'neighbors': _arr([0], np.uint32),
+        'd_gisum': wp.zeros(1, dtype=wp_dtype, device=_device()),
+        'd_gjsum': wp.zeros(1, dtype=wp_dtype, device=_device()),
+        '_n': 1,
+    }
+    _launch_manual(group, arrays, dim=3, kernel_id=kernel_id)
+
+    kernel = kernel_type(dim=3)
+    expected_i = kernel.dwdq(rij=r, h=hi) / (hi * r)
+    expected_j = kernel.dwdq(rij=r, h=hj) / (hj * r)
+    rtol = 2.0e-5 if dtype == np.float32 else 2.0e-12
+    atol = 2.0e-6 if dtype == np.float32 else 2.0e-13
+    np.testing.assert_allclose(
+        arrays['d_gisum'].numpy(), [expected_i], rtol=rtol, atol=atol)
+    np.testing.assert_allclose(
+        arrays['d_gjsum'].numpy(), [expected_j], rtol=rtol, atol=atol)
+    if kernel_id in (0, 2):
+        assert expected_i == 0.0
+        assert expected_j != 0.0
 
 
 def test_generator_unions_signature_and_scalars_in_order():

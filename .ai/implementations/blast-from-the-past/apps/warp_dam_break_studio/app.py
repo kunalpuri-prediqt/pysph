@@ -21,6 +21,7 @@ from worker import FrameBuffer, SolverWorker, TERMINAL_STATES
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = "/tmp/pysph-dam-break-studio.npz"
 SNAPSHOT_ARRAYS = ("xyz", "h", "rho", "p", "speed", "kind", "level")
+OPTIONAL_SNAPSHOT_ARRAYS = ("velocity",)
 MIN_RENDER_SIZE = (320, 240)
 MAX_RENDER_SIZE = (2400, 1600)
 
@@ -37,6 +38,19 @@ def validate_run_config(config, snapshot_stride):
         raise ValueError("Maximum splits must be at least one")
     if int(snapshot_stride) < 1:
         raise ValueError("Visualization stride must be at least one")
+    if config.get("obstacle_mode", "fixed") not in {
+        "none", "fixed", "floating",
+    }:
+        raise ValueError("Obstacle mode must be none, fixed, or floating")
+    if float(config.get("body_density", 500.0)) <= 0.0:
+        raise ValueError("Floating-body density must be positive")
+    body_dimensions = (
+        float(config.get("body_length", 0.32)),
+        float(config.get("body_width", 0.28)),
+        float(config.get("body_height", 0.20)),
+    )
+    if min(body_dimensions) <= 0.0:
+        raise ValueError("Floating-body dimensions must be positive")
     bounds = config["fine_bounds"]
     if bounds[0] >= bounds[1] or bounds[5] <= bounds[4]:
         raise ValueError("Adaptive region bounds are invalid")
@@ -54,11 +68,19 @@ def load_saved_result(path):
         if any(name not in data for name in SNAPSHOT_ARRAYS):
             return None
         snapshot = {name: np.asarray(data[name]) for name in SNAPSHOT_ARRAYS}
+        snapshot.update({
+            name: np.asarray(data[name])
+            for name in OPTIONAL_SNAPSHOT_ARRAYS
+            if name in data
+        })
         metrics = json.loads(str(data["metrics"].item()))
     manifest = path.with_suffix(".json")
     if manifest.is_file():
         manifest_data = json.loads(manifest.read_text())
         metrics.update(manifest_data.get("metrics", {}))
+        config = manifest_data.get("config", {})
+        metrics.setdefault("obstacle_mode", config.get("obstacle_mode", "fixed"))
+    snapshot["obstacle_mode"] = metrics.get("obstacle_mode", "fixed")
     return snapshot, metrics
 
 
@@ -92,16 +114,27 @@ class WarpDamBreakStudio:
             "adapt_every": 10,
             "max_splits": 128,
             "snapshot_stride": 5,
-            "with_obstacle": True,
+            "obstacle_mode": "floating",
+            "obstacle_items": [
+                {"title": "Floating body", "value": "floating"},
+                {"title": "Fixed obstacle", "value": "fixed"},
+                {"title": "No obstacle", "value": "none"},
+            ],
+            "body_density": 500.0,
+            "body_center_x": 2.35,
+            "body_center_z": 0.30,
+            "body_length": 0.32,
+            "body_width": 0.28,
+            "body_height": 0.20,
             "kernel": "wendland",
             "alpha": 0.25,
             "xsph_eps": 0.5,
             "cfl": 0.3,
             "n_damp": 50,
-            "fine_xmin": 1.9,
-            "fine_xmax": 3.5,
+            "fine_xmin": 1.75,
+            "fine_xmax": 2.8,
             "fine_zmax": 0.65,
-            "scalar": "resolution",
+            "scalar": "pressure",
             "scalar_items": [
                 {"title": name.title(), "value": name}
                 for name in SCALARS
@@ -132,8 +165,21 @@ class WarpDamBreakStudio:
             "coarse_particles": 0,
             "split_parents": 0,
             "merged_families": 0,
+            "shifted_particles": 0,
+            "max_shift": 0.0,
             "mass_drift": 0.0,
             "p_max": 0.0,
+            "body_particles": 0,
+            "body_mass": 0.0,
+            "body_cm": None,
+            "body_vc": None,
+            "body_omega": None,
+            "body_orientation": None,
+            "body_geometry_drift": 0.0,
+            "contact_force": None,
+            "contact_impulse": None,
+            "contact_max_penetration": 0.0,
+            "rigid_device_error": 0,
             "steps_per_second": None,
             "device_name": "NVIDIA GPU",
             "error_text": "",
@@ -152,7 +198,7 @@ class WarpDamBreakStudio:
         self.state.change("particle_scale")(self._on_particle_scale)
         self.state.change("wall_opacity")(self._on_wall_opacity)
         self.state.change("obstacle_visible")(self._on_obstacle_visible)
-        self.state.change("with_obstacle")(self._on_obstacle_visible)
+        self.state.change("obstacle_mode")(self._on_obstacle_mode)
         self.state.change("colorbar_visible")(self._on_colorbar_visible)
         self.state.change("frame_index")(self._on_frame_index)
         self.state.change("viewport_size")(self._on_viewport_size)
@@ -164,7 +210,13 @@ class WarpDamBreakStudio:
             "steps": int(self.state.steps),
             "adapt_every": int(self.state.adapt_every),
             "max_splits_per_adapt": int(self.state.max_splits),
-            "with_obstacle": bool(self.state.with_obstacle),
+            "obstacle_mode": self.state.obstacle_mode,
+            "body_density": float(self.state.body_density),
+            "body_center_x": float(self.state.body_center_x),
+            "body_center_z": float(self.state.body_center_z),
+            "body_length": float(self.state.body_length),
+            "body_width": float(self.state.body_width),
+            "body_height": float(self.state.body_height),
             "kernel": self.state.kernel,
             "alpha": float(self.state.alpha),
             "xsph_eps": float(self.state.xsph_eps),
@@ -251,6 +303,11 @@ class WarpDamBreakStudio:
         self.scene.set_obstacle_visible(obstacle_visible)
         self._refresh_view()
 
+    def _on_obstacle_mode(self, obstacle_mode, **_):
+        self.scene.set_obstacle_mode(obstacle_mode)
+        self.scene.set_obstacle_visible(self.state.obstacle_visible)
+        self._refresh_view()
+
     def _on_colorbar_visible(self, colorbar_visible, **_):
         self.scene.set_colorbar_visible(colorbar_visible)
         self._refresh_view()
@@ -296,8 +353,28 @@ class WarpDamBreakStudio:
                 "coarse_particles": metrics.get("coarse_particles", 0),
                 "split_parents": metrics.get("split_parents", 0),
                 "merged_families": metrics.get("merged_families", 0),
+                "shifted_particles": metrics.get("shifted_particles", 0),
+                "max_shift": metrics.get("max_shift", 0.0),
                 "mass_drift": metrics.get("mass_drift", 0.0),
                 "p_max": metrics.get("p_max", 0.0),
+                "obstacle_mode": metrics.get(
+                    "obstacle_mode", snapshot.get("obstacle_mode", "fixed")
+                ),
+                "body_particles": metrics.get("body_particles", 0),
+                "body_mass": metrics.get("body_mass", 0.0),
+                "body_cm": metrics.get("body_cm"),
+                "body_vc": metrics.get("body_vc"),
+                "body_omega": metrics.get("body_omega"),
+                "body_orientation": metrics.get("body_orientation"),
+                "body_geometry_drift": metrics.get(
+                    "body_geometry_drift", 0.0
+                ),
+                "contact_force": metrics.get("contact_force"),
+                "contact_impulse": metrics.get("contact_impulse"),
+                "contact_max_penetration": metrics.get(
+                    "contact_max_penetration", 0.0
+                ),
+                "rigid_device_error": metrics.get("rigid_device_error", 0),
                 "steps_per_second": metrics.get("steps_per_second"),
                 "device_name": metrics.get("runtime", {}).get(
                     "device_name", self.state.device_name
@@ -507,13 +584,14 @@ class WarpDamBreakStudio:
                                     prepend_inner_icon="mdi-step-forward",
                                     disabled=("run_active",),
                                 )
-                        v3.VSwitch(
-                            v_model=("with_obstacle", True),
-                            label="Fixed obstacle",
-                            color="deep-orange",
+                        v3.VSelect(
+                            v_model=("obstacle_mode", "floating"),
+                            items=("obstacle_items",),
+                            label="Obstacle",
+                            variant="outlined",
+                            prepend_inner_icon="mdi-cube-outline",
                             disabled=("run_active",),
                             density="compact",
-                            hide_details=True,
                             classes="mb-2",
                         )
                     with v3.VExpansionPanels(
@@ -602,10 +680,57 @@ class WarpDamBreakStudio:
                                     thumb_label=True,
                                     disabled=("run_active",),
                                 )
+                        with v3.VExpansionPanel(
+                            title="Floating body",
+                            v_show=("obstacle_mode === 'floating'",),
+                        ):
+                            with v3.VExpansionPanelText():
+                                v3.VTextField(
+                                    v_model=("body_density", 500.0),
+                                    label="Density",
+                                    type="number",
+                                    variant="outlined",
+                                    density="compact",
+                                    disabled=("run_active",),
+                                )
+                                with v3.VRow(dense=True):
+                                    with v3.VCol(cols=6):
+                                        v3.VTextField(
+                                            v_model=("body_center_x", 2.35),
+                                            label="Center x",
+                                            type="number",
+                                            variant="outlined",
+                                            density="compact",
+                                            disabled=("run_active",),
+                                        )
+                                    with v3.VCol(cols=6):
+                                        v3.VTextField(
+                                            v_model=("body_center_z", 0.30),
+                                            label="Center z",
+                                            type="number",
+                                            variant="outlined",
+                                            density="compact",
+                                            disabled=("run_active",),
+                                        )
+                                with v3.VRow(dense=True):
+                                    for key, label, value in (
+                                        ("body_length", "Length", 0.32),
+                                        ("body_width", "Width", 0.28),
+                                        ("body_height", "Height", 0.20),
+                                    ):
+                                        with v3.VCol(cols=4):
+                                            v3.VTextField(
+                                                v_model=(key, value),
+                                                label=label,
+                                                type="number",
+                                                variant="outlined",
+                                                density="compact",
+                                                disabled=("run_active",),
+                                            )
                         with v3.VExpansionPanel(title="Visualization"):
                             with v3.VExpansionPanelText():
                                 v3.VSelect(
-                                    v_model=("scalar", "resolution"),
+                                    v_model=("scalar", "pressure"),
                                     items=("scalar_items",),
                                     label="Color particles by",
                                     variant="outlined",
@@ -752,6 +877,26 @@ class WarpDamBreakStudio:
                             "viewport_size", classes="viewport-sizer"
                         )
                         with html.Div(classes="viewport-controls"):
+                            with v3.VBtnToggle(
+                                v_model=("scalar", "pressure"),
+                                mandatory=True,
+                                divided=True,
+                                density="compact",
+                                color="cyan",
+                                classes="scalar-toggle",
+                            ):
+                                v3.VBtn(
+                                    "Pressure",
+                                    value="pressure",
+                                    prepend_icon="mdi-gauge",
+                                    size="small",
+                                )
+                                v3.VBtn(
+                                    "Speed",
+                                    value="speed",
+                                    prepend_icon="mdi-speedometer",
+                                    size="small",
+                                )
                             v3.VBtn(
                                 "Reset view",
                                 prepend_icon="mdi-crosshairs-gps",
@@ -880,6 +1025,79 @@ class WarpDamBreakStudio:
                                 "merged_families.toLocaleString()",
                                 span=True,
                             )
+                            self._metric(
+                                "Shifted / max shift", "mdi-vector-polyline",
+                                "shifted_particles.toLocaleString() + ' / ' + "
+                                "Number(max_shift).toExponential(2) + ' m'",
+                                span=True,
+                            )
+                        with html.Div(
+                            v_show=("obstacle_mode === 'floating'",),
+                        ):
+                            html.Div(classes="details-rule")
+                            html.Div("RIGID BODY", classes="eyebrow mb-2")
+                            with html.Div(classes="details-grid"):
+                                self._metric(
+                                    "Body particles", "mdi-cube-scan",
+                                    "body_particles.toLocaleString()",
+                                )
+                                self._metric(
+                                    "Body mass", "mdi-weight",
+                                    "Number(body_mass).toFixed(3) + ' kg'",
+                                )
+                                self._metric(
+                                    "Geometry drift", "mdi-ruler-square",
+                                    "Number(body_geometry_drift).toExponential(2)",
+                                    tone="Number(body_geometry_drift) > 1e-4 ? "
+                                         "'bad' : Number(body_geometry_drift) > "
+                                         "1e-6 ? 'warn' : 'ok'",
+                                )
+                                self._metric(
+                                    "Center of mass", "mdi-axis-arrow",
+                                    "body_cm ? body_cm.map(v => "
+                                    "Number(v).toFixed(3)).join(', ') : '—'",
+                                    span=True,
+                                )
+                                self._metric(
+                                    "Linear velocity", "mdi-speedometer-medium",
+                                    "body_vc ? body_vc.map(v => "
+                                    "Number(v).toExponential(2)).join(', ') : '—'",
+                                    span=True,
+                                )
+                                self._metric(
+                                    "Angular velocity", "mdi-rotate-orbit",
+                                    "body_omega ? body_omega.map(v => "
+                                    "Number(v).toExponential(2)).join(', ') : '—'",
+                                    span=True,
+                                )
+                                self._metric(
+                                    "Contact force", "mdi-vector-combine",
+                                    "contact_force ? contact_force.map(v => "
+                                    "Number(v).toExponential(2)).join(', ') : '—'",
+                                    span=True,
+                                )
+                                self._metric(
+                                    "Contact impulse", "mdi-chart-timeline-variant",
+                                    "contact_impulse ? contact_impulse.map(v => "
+                                    "Number(v).toExponential(2)).join(', ') : '—'",
+                                    span=True,
+                                )
+                                self._metric(
+                                    "Max penetration", "mdi-arrow-collapse-down",
+                                    "Number(contact_max_penetration).toExponential(2) + ' m'",
+                                    span=True,
+                                    tone="Number(contact_max_penetration) > "
+                                         "0.025 ? 'bad' : "
+                                         "Number(contact_max_penetration) > "
+                                         "0 ? 'warn' : 'ok'",
+                                )
+                                self._metric(
+                                    "Device error", "mdi-alert-circle-outline",
+                                    "rigid_device_error.toLocaleString()",
+                                    span=True,
+                                    tone="Number(rigid_device_error) !== 0 ? "
+                                         "'bad' : 'ok'",
+                                )
                         html.Div(classes="details-rule")
                         html.Div("SOLVER", classes="eyebrow mb-2")
                         with html.Div(classes="details-grid"):

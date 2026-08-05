@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
 # Shared per-pair quantities the generator can compute once and expose to the
 # ``loop`` snippets of every equation in a group.
 SHARED_QUANTITIES = (
-    'dx', 'dy', 'dz', 'rij2', 'rij', 'hij', 'grad', 'wij',
+    'dx', 'dy', 'dz', 'rij2', 'rij', 'hij', 'grad', 'gradi', 'gradj', 'wij',
     'vijx', 'vijy', 'vijz',
 )
 
@@ -57,7 +57,8 @@ class WarpEquation(object):
 
     - ``i`` (destination particle index) and ``j`` (neighbor index);
     - any shared quantity listed in :attr:`requires` (``dx``, ``rij``, ``hij``,
-      ``grad``, ``wij``, ``vijx`` ...);
+      averaged-``h`` ``grad``, destination-``h`` ``gradi``, source-``h``
+      ``gradj``, ``wij``, ``vijx`` ...);
     - source arrays as ``s_<name>`` and destination arrays as ``d_<name>``;
     - shared output accumulators as ``_acc_<name>`` for each name in
       :attr:`out_arrays` (initialized to zero by the generator, written back
@@ -157,8 +158,10 @@ def _collect(equations, neighbor_mode='flat'):
             seq.append(name)
 
     # Geometry-implied arrays first so the signature is stable and readable.
-    needs_pos = requires & {'dx', 'dy', 'dz', 'rij2', 'rij', 'grad', 'wij'}
-    needs_h = requires & {'hij', 'grad', 'wij'}
+    needs_pos = requires & {
+        'dx', 'dy', 'dz', 'rij2', 'rij', 'grad', 'gradi', 'gradj', 'wij'
+    }
+    needs_h = requires & {'hij', 'grad', 'gradi', 'gradj', 'wij'}
     needs_vel = requires & {'vijx', 'vijy', 'vijz'}
     if neighbor_mode in ('grid', 'multilevel'):
         # The support cutoff reads radius_scale * h on both i and j.
@@ -219,7 +222,9 @@ def _emit_geometry(requires, type_token, func_suffix, phase='all',
     emit_post = phase in ('all', 'post')
     lines = []
     L = lines.append
-    needs_pos = requires & {'dx', 'dy', 'dz', 'rij2', 'rij', 'grad', 'wij'}
+    needs_pos = requires & {
+        'dx', 'dy', 'dz', 'rij2', 'rij', 'grad', 'gradi', 'gradj', 'wij'
+    }
     if emit_pre and needs_pos:
         L("        dx = d_x[i] - s_x[j]")
         if periodic:
@@ -237,9 +242,11 @@ def _emit_geometry(requires, type_token, func_suffix, phase='all',
         if periodic:
             L("            if periodic_z == wp.int32(1):")
             L("                dz = dz - box_lz * wp.round(dz / box_lz)")
-    if emit_pre and (requires & {'rij2', 'rij', 'grad', 'wij'}):
+    if emit_pre and (
+        requires & {'rij2', 'rij', 'grad', 'gradi', 'gradj', 'wij'}
+    ):
         L("        rij2 = dx*dx + dy*dy + dz*dz")
-    if emit_post and (requires & {'rij', 'grad', 'wij'}):
+    if emit_post and (requires & {'rij', 'grad', 'gradi', 'gradj', 'wij'}):
         L("        rij = wp.sqrt(rij2)")
     if emit_post and (requires & {'hij', 'grad', 'wij'}):
         L("        hij = %s(0.5) * (d_h[i] + s_h[j])" % type_token)
@@ -248,6 +255,16 @@ def _emit_geometry(requires, type_token, func_suffix, phase='all',
         L("        if rij > %s(1.0e-12):" % type_token)
         L("            grad = _kernel_dwdq_%s(rij, hij, dim, kernel_id)"
           " / (hij * rij)" % func_suffix)
+    if emit_post and 'gradi' in requires:
+        L("        gradi = %s(0.0)" % type_token)
+        L("        if rij > %s(1.0e-12):" % type_token)
+        L("            gradi = _kernel_dwdq_%s("
+          "rij, d_h[i], dim, kernel_id) / (d_h[i] * rij)" % func_suffix)
+    if emit_post and 'gradj' in requires:
+        L("        gradj = %s(0.0)" % type_token)
+        L("        if rij > %s(1.0e-12):" % type_token)
+        L("            gradj = _kernel_dwdq_%s("
+          "rij, s_h[j], dim, kernel_id) / (s_h[j] * rij)" % func_suffix)
     if emit_post and 'wij' in requires:
         L("        wij = _kernel_value_%s(rij, hij, dim, kernel_id)"
           % func_suffix)

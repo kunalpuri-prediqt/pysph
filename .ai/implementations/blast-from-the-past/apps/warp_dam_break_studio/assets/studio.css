@@ -189,6 +189,13 @@ html, body, #app { background: var(--studio-bg); overflow: hidden; }
   backdrop-filter: blur(18px); border-radius: var(--r-md);
   box-shadow: var(--el-1);
 }
+.scalar-toggle {
+  border: 1px solid rgba(79, 185, 216, .22);
+  border-radius: 9px; overflow: hidden;
+}
+.scalar-toggle .v-btn {
+  min-width: 94px; font-size: .68rem; letter-spacing: .025em;
+}
 .viewport-btn { letter-spacing: .02em; }
 .viewport-empty {
   position: absolute; inset: 0; z-index: 3;

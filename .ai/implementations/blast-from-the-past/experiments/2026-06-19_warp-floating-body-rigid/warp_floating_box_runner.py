@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import setuptools  # noqa: F401
+
+# Python 3.14 removed stdlib distutils while Compyle 0.9.1 still imports it.
+# Importing setuptools first activates its compatibility module.
 
 HERE = Path(__file__).resolve().parent
 DAM_PACKET = HERE.parent / '2026-06-18_warp-dam-break-3d-runner'
