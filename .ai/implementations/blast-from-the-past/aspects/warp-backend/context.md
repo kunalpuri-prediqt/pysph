@@ -139,6 +139,15 @@ device-resident.
   path and P2's GPU-resident 6-DOF RK2. The existing fixed-wall driver and 2D
   generated source are unchanged; final Warp SPH suite `54 passed`.
 
+## Terrain SPH procedural-boundary checkpoint (2026-08-06)
+
+`DamBreakConfig` now accepts the isolated `terrain-wcsph` family with
+`obstacle_mode=hill`. The existing uniform WCSPH fixed-solid path receives a
+deterministic filled Gaussian mound sampled on the fluid `dx` lattice; no
+equation, generated neighbor kernel, adaptive controller, or non-Warp host API
+changed. The hill remains stationary and is reported explicitly in snapshots,
+metrics and save output.
+
 ## References for this aspect
 
 - `.ai/implementations/blast-from-the-past/references/index.md`

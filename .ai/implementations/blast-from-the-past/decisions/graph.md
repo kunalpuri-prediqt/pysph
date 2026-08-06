@@ -11,6 +11,9 @@ flowchart TD
     ADR_0004["ADR-0004<br/>Accepted"]
     ADR_0007["ADR-0007<br/>Accepted"]
   end
+  subgraph host_integration[host-integration]
+    ADR_0013["ADR-0013<br/>Accepted"]
+  end
   subgraph particle_memory[particle-memory]
     ADR_0002["ADR-0002<br/>Accepted"]
     ADR_0009["ADR-0009<br/>Proposed"]
@@ -22,6 +25,9 @@ flowchart TD
     ADR_0008["ADR-0008<br/>Accepted"]
     ADR_0010["ADR-0010<br/>Accepted"]
     ADR_0011["ADR-0011<br/>Proposed"]
+    ADR_0012["ADR-0012<br/>Accepted"]
+    ADR_0014["ADR-0014<br/>Accepted"]
+    ADR_0015["ADR-0015<br/>Accepted"]
   end
   ADR_0002 -. relates_to .-> ADR_0001
   ADR_0003 -. relates_to .-> ADR_0002
@@ -53,6 +59,23 @@ flowchart TD
   ADR_0011 -. relates_to .-> ADR_0003
   ADR_0011 -. relates_to .-> ADR_0006
   ADR_0011 -. relates_to .-> ADR_0009
+  ADR_0012 -- depends_on --> ADR_0003
+  ADR_0012 -- depends_on --> ADR_0005
+  ADR_0012 -. relates_to .-> ADR_0003
+  ADR_0012 -. relates_to .-> ADR_0005
+  ADR_0012 -. relates_to .-> ADR_0006
+  ADR_0012 -. relates_to .-> ADR_0008
+  ADR_0012 -. relates_to .-> ADR_0011
+  ADR_0013 -- depends_on --> ADR_0012
+  ADR_0013 -. relates_to .-> ADR_0006
+  ADR_0013 -. relates_to .-> ADR_0012
+  ADR_0014 -- depends_on --> ADR_0012
+  ADR_0014 -- depends_on --> ADR_0013
+  ADR_0014 -. relates_to .-> ADR_0005
+  ADR_0014 -. relates_to .-> ADR_0012
+  ADR_0014 -. relates_to .-> ADR_0013
+  ADR_0015 -. relates_to .-> ADR_0012
+  ADR_0015 -. relates_to .-> ADR_0014
   classDef Accepted fill:#d5f5d5,stroke:#2c7a2c;
   classDef Proposed fill:#fff3bf,stroke:#9a7500;
   classDef Superseded fill:#e5e7eb,stroke:#6b7280;
@@ -68,4 +91,8 @@ flowchart TD
   class ADR_0009 Proposed;
   class ADR_0010 Accepted;
   class ADR_0011 Proposed;
+  class ADR_0012 Accepted;
+  class ADR_0013 Accepted;
+  class ADR_0014 Accepted;
+  class ADR_0015 Accepted;
 ```

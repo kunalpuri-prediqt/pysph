@@ -27,6 +27,12 @@ curated implementation-facing digest. The spec now has an index at
 `.ai/implementations/blast-from-the-past/spec/README.md` linking the codebase,
 ParticleArray, and NNPS layers.
 
+The local Warp studio now exposes five intentionally separate solver profiles.
+`Terrain SPH` routes `terrain-wcsph` through the existing spawned WCSPH worker,
+uses the normal VTK particle viewport plus a smooth analytic hill actor, and
+keeps Gameplay WebGPU and Geospatial WebGPU routing unchanged. The five-mode
+selector wraps to two rows in the narrow drawer.
+
 ## Key sub-topics
 
 - Existing build/test commands.

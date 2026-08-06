@@ -322,6 +322,15 @@ python -m pytest pysph/base/tests/test_warp_sph.py -q
 
 ## Key sub-topics
 
+### Terrain SPH procedural interaction smoke (2026-08-06)
+
+Matched 250-step `dx=0.1` flat/hill runs on the RTX 5090 stayed finite with
+zero hill-case fluid-mass drift and bitwise-stationary hill coordinates. The
+hill changed 503/1,000 final particle positions by more than `1 mm`; RMS/max
+position changes were `9.76 mm / 13.58 cm`, and the surge front changed by
+`-3.11 cm`. Warm medians were `5.34 ms` flat and `8.13 ms` hill. This is an
+interaction smoke only, not boundary convergence or field validation.
+
 - Baseline selection.
 - Hardware/runtime recording.
 - Correctness tolerance and performance thresholds.

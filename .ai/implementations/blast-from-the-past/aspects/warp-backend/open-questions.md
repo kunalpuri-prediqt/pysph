@@ -8,3 +8,6 @@
 - [closed 2026-08-05] Generated neighbor loops expose opt-in scalar `gradi`
   and `gradj` factors evaluated at destination/source `h`; equations not
   requesting them retain the prior averaged-`HIJ` generated source.
+- [open 2026-08-06] What fixed-boundary sampling/correction and refinement
+  study should gate a procedural terrain surface beyond this filled-particle
+  interaction smoke?

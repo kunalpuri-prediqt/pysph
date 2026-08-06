@@ -8,7 +8,8 @@ import numpy as np
 
 from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import vtkFloatArray, vtkLookupTable, vtkPoints
-from vtkmodules.vtkCommonDataModel import vtkPolyData
+from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPolyData, vtkTriangle
+from vtkmodules.vtkFiltersCore import vtkPolyDataNormals
 from vtkmodules.vtkFiltersSources import vtkCubeSource, vtkPlaneSource, vtkSphereSource
 from vtkmodules.vtkIOImage import vtkJPEGWriter
 from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
@@ -168,6 +169,7 @@ class ParticleScene:
         self.scalar = "pressure"
         self.obstacle_mode = "fixed"
         self.obstacle_visible = True
+        self._hill_key = None
         self._add_context()
         self._set_camera()
 
@@ -234,6 +236,69 @@ class ParticleScene:
         self.renderer.AddActor(cube_actor)
         self.context_obstacle = cube_actor
         self.context_obstacle_source = cube
+
+        self.hill_polydata = vtkPolyData()
+        hill_normals = vtkPolyDataNormals()
+        hill_normals.SetInputData(self.hill_polydata)
+        hill_normals.ComputePointNormalsOn()
+        hill_normals.SplittingOff()
+        hill_mapper = vtkPolyDataMapper()
+        hill_mapper.SetInputConnection(hill_normals.GetOutputPort())
+        hill_actor = vtkActor()
+        hill_actor.SetMapper(hill_mapper)
+        hill_actor.GetProperty().SetColor(0.16, 0.31, 0.12)
+        hill_actor.GetProperty().SetInterpolationToPBR()
+        hill_actor.GetProperty().SetRoughness(0.92)
+        hill_actor.SetVisibility(False)
+        self.renderer.AddActor(hill_actor)
+        self.hill_actor = hill_actor
+
+    def _update_hill(self, parameters):
+        if not parameters:
+            return
+        key = tuple(float(parameters[name]) for name in (
+            "center_x", "center_y", "height", "radius_x", "radius_y",
+        ))
+        if key == self._hill_key:
+            return
+        center_x, center_y, height, radius_x, radius_y = key
+        x_axis = np.linspace(
+            max(0.0, center_x - 3.0 * radius_x),
+            min(TANK_X_LEN, center_x + 3.0 * radius_x), 97,
+        )
+        y_axis = np.linspace(
+            max(-TANK_Y_HALF, center_y - 3.0 * radius_y),
+            min(TANK_Y_HALF, center_y + 3.0 * radius_y), 49,
+        )
+        xx, yy = np.meshgrid(x_axis, y_axis)
+        zz = height * np.exp(-0.5 * (
+            ((xx - center_x) / radius_x) ** 2
+            + ((yy - center_y) / radius_y) ** 2
+        ))
+        xyz = np.column_stack((xx.ravel(), yy.ravel(), zz.ravel()))
+        points = vtkPoints()
+        vtk_xyz = numpy_to_vtk(
+            np.ascontiguousarray(xyz, dtype=np.float32), deep=True
+        )
+        vtk_xyz.SetNumberOfComponents(3)
+        points.SetData(vtk_xyz)
+        triangles = vtkCellArray()
+        nx = len(x_axis)
+        for iy in range(len(y_axis) - 1):
+            for ix in range(nx - 1):
+                lower = iy * nx + ix
+                for ids in (
+                    (lower, lower + 1, lower + nx),
+                    (lower + nx, lower + 1, lower + nx + 1),
+                ):
+                    triangle = vtkTriangle()
+                    for corner, point_id in enumerate(ids):
+                        triangle.GetPointIds().SetId(corner, point_id)
+                    triangles.InsertNextCell(triangle)
+        self.hill_polydata.SetPoints(points)
+        self.hill_polydata.SetPolys(triangles)
+        self.hill_polydata.Modified()
+        self._hill_key = key
 
     def _fit_context_obstacle(self, points):
         """Draw a solid obstacle box centered on the obstacle particles.
@@ -332,6 +397,8 @@ class ParticleScene:
         )
         if self.obstacle_mode == "fixed" and np.any(obstacle_mask):
             self._fit_context_obstacle(xyz[obstacle_mask])
+        if self.obstacle_mode == "hill":
+            self._update_hill(snapshot.get("hill"))
         self._apply_obstacle_visibility(bool(np.any(obstacle_mask)))
         self.set_scalar(self.scalar)
         self.renderer.ResetCameraClippingRange()
@@ -349,7 +416,7 @@ class ParticleScene:
         self._apply_obstacle_visibility(has_points)
 
     def set_obstacle_mode(self, mode):
-        if mode not in {"none", "fixed", "floating"}:
+        if mode not in {"none", "fixed", "floating", "hill"}:
             raise ValueError(f"unknown obstacle mode {mode!r}")
         self.obstacle_mode = mode
 
@@ -360,6 +427,9 @@ class ParticleScene:
         )
         self.context_obstacle.SetVisibility(
             visible and self.obstacle_mode == "fixed"
+        )
+        self.hill_actor.SetVisibility(
+            visible and self.obstacle_mode == "hill"
         )
 
     def jpeg_data_uri(self, quality=82):

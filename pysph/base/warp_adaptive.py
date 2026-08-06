@@ -81,6 +81,64 @@ _VECTOR_COMPONENTS = (
 )
 
 
+def gaussian_hill_height(
+        x, y, center_x=3.0, center_y=0.0, height=0.35,
+        radius_x=0.40, radius_y=0.12):
+    """Return the analytic height of a procedural Gaussian hill."""
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    exponent = -0.5 * (
+        ((x - float(center_x)) / float(radius_x)) ** 2
+        + ((y - float(center_y)) / float(radius_y)) ** 2
+    )
+    return float(height) * np.exp(exponent)
+
+
+def make_gaussian_hill_particles(
+        dx, center_x=3.0, center_y=0.0, height=0.35,
+        radius_x=0.40, radius_y=0.12,
+        tank_length=161.0 / 30.0, tank_half_width=0.25,
+        tank_height=1.5):
+    """Sample a filled, floor-exclusive hill on the ``dx`` lattice."""
+    dx = float(dx)
+    if min(dx, height, radius_x, radius_y) <= 0.0:
+        raise ValueError("hill spacing, height, and radii must be positive")
+    if not (
+        dx <= float(center_x) <= float(tank_length) - dx
+        and -float(tank_half_width) + dx
+        <= float(center_y)
+        <= float(tank_half_width) - dx
+    ):
+        raise ValueError("hill center must lie inside the tank interior")
+    if float(height) > float(tank_height):
+        raise ValueError("hill height must not exceed the tank height")
+    xmin = max(dx, float(center_x) - 3.0 * float(radius_x))
+    xmax = min(float(tank_length) - dx,
+               float(center_x) + 3.0 * float(radius_x))
+    ymin = max(-float(tank_half_width) + dx,
+               float(center_y) - 3.0 * float(radius_y))
+    ymax = min(float(tank_half_width) - dx,
+               float(center_y) + 3.0 * float(radius_y))
+    if xmin > xmax or ymin > ymax:
+        raise ValueError("hill lies outside the tank")
+    x_axis = np.arange(xmin, xmax + 0.25 * dx, dx)
+    y_axis = np.arange(ymin, ymax + 0.25 * dx, dx)
+    samples = []
+    for x_value in x_axis:
+        for y_value in y_axis:
+            top = float(gaussian_hill_height(
+                x_value, y_value, center_x, center_y,
+                height, radius_x, radius_y,
+            ))
+            if top < 0.5 * dx:
+                continue
+            for z_value in np.arange(dx, top + 0.25 * dx, dx):
+                samples.append((x_value, y_value, z_value))
+    if not samples:
+        raise ValueError("hill parameters produce no boundary particles")
+    return np.ascontiguousarray(samples, dtype=np.float64)
+
+
 def damp_factor(count, n_damp):
     """Return PySPH's startup timestep damping factor."""
     if n_damp > 0 and count < n_damp:
@@ -604,6 +662,7 @@ def warp_particle_array_from_state(state, name="fluid", device=None):
 class DamBreakConfig:
     """Serializable configuration shared by the experiment and web worker."""
 
+    solver_family: str = "wcsph"
     resolution_mode: str = "adaptive"
     dx: float = 0.1
     hdx: float = 1.3
@@ -631,6 +690,11 @@ class DamBreakConfig:
     obstacle_mode: str | None = None
     with_obstacle: bool | None = True
     obstacle_center_x: float = 3.0
+    hill_center_x: float = 3.0
+    hill_center_y: float = 0.0
+    hill_height: float = 0.35
+    hill_radius_x: float = 0.40
+    hill_radius_y: float = 0.12
     body_density: float = 500.0
     body_center_x: float = 2.35
     body_center_y: float = 0.0
@@ -665,6 +729,8 @@ class DamBreakConfig:
     device: str | None = None
 
     def validate(self):
+        if self.solver_family not in {"wcsph", "terrain-wcsph"}:
+            raise ValueError("unsupported WCSPH solver family")
         if self.resolution_mode not in {"uniform", "adaptive"}:
             raise ValueError("resolution_mode must be 'uniform' or 'adaptive'")
         if self.dx <= 0 or self.hdx <= 0:
@@ -685,15 +751,26 @@ class DamBreakConfig:
             raise ValueError("cfl must be positive")
         if self.obstacle_mode is None:
             self.obstacle_mode = "fixed" if self.with_obstacle else "none"
-        if self.obstacle_mode not in {"none", "fixed", "floating"}:
+        if self.obstacle_mode not in {"none", "fixed", "floating", "hill"}:
             raise ValueError(
-                "obstacle_mode must be 'none', 'fixed', or 'floating'"
+                "obstacle_mode must be none, fixed, floating, or hill"
             )
         self.with_obstacle = self.obstacle_mode != "none"
         if self.body_density <= 0.0:
             raise ValueError("body_density must be positive")
         if min(self.body_length, self.body_width, self.body_height) <= 0.0:
             raise ValueError("floating body dimensions must be positive")
+        if min(
+                self.hill_height, self.hill_radius_x, self.hill_radius_y
+        ) <= 0.0:
+            raise ValueError("hill height and radii must be positive")
+        if not (
+            self.dx <= self.hill_center_x <= 161.0 / 30.0 - self.dx
+            and -0.25 + self.dx <= self.hill_center_y <= 0.25 - self.dx
+        ):
+            raise ValueError("hill center must lie inside the tank interior")
+        if self.hill_height > 1.5:
+            raise ValueError("hill height must not exceed the tank height")
         if self.body_spacing is not None and self.body_spacing <= 0.0:
             raise ValueError("body_spacing must be positive")
         if self.contact_radius is not None and self.contact_radius < 0.0:
@@ -793,6 +870,25 @@ class WarpDamBreakSimulation:
             rho0=self.config.rho0,
             with_obstacle=self.config.obstacle_mode == "fixed",
             obstacle_center_x=self.config.obstacle_center_x,
+        )
+
+    def _fixed_hill(self):
+        xyz = make_gaussian_hill_particles(
+            dx=self.config.dx,
+            center_x=self.config.hill_center_x,
+            center_y=self.config.hill_center_y,
+            height=self.config.hill_height,
+            radius_x=self.config.hill_radius_x,
+            radius_y=self.config.hill_radius_y,
+        )
+        count = len(xyz)
+        volume = self.config.dx ** 3
+        return get_particle_array(
+            name="obstacle",
+            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+            h=np.full(count, self.h0),
+            m=np.full(count, self.config.rho0 * volume),
+            rho=np.full(count, self.config.rho0),
         )
 
     def _floating_body(self):
@@ -969,6 +1065,8 @@ class WarpDamBreakSimulation:
         if self._initialized:
             return self.snapshot(include_solids=True)
         cpu_particles = self._geometry().create_particles()
+        if self.config.obstacle_mode == "hill":
+            cpu_particles.append(self._fixed_hill())
         names = ("fluid", "wall", "obstacle")
         self.particles = [
             self._to_warp(pa, names[index])
@@ -1140,6 +1238,16 @@ class WarpDamBreakSimulation:
                 for index in range(len(self.particles))
             },
             "obstacle_mode": self.config.obstacle_mode,
+            "hill": (
+                {
+                    "center_x": self.config.hill_center_x,
+                    "center_y": self.config.hill_center_y,
+                    "height": self.config.hill_height,
+                    "radius_x": self.config.hill_radius_x,
+                    "radius_y": self.config.hill_radius_y,
+                }
+                if self.config.obstacle_mode == "hill" else None
+            ),
         }
 
     def _rigid_metrics(self):
@@ -1262,6 +1370,7 @@ class WarpDamBreakSimulation:
             self.adaptation_history[-1] if self.adaptation_history else None
         )
         return {
+            "solver_family": self.config.solver_family,
             "obstacle_mode": self.config.obstacle_mode,
             "resolution_mode": self.config.resolution_mode,
             "step": self.step_count,
@@ -1273,6 +1382,11 @@ class WarpDamBreakSimulation:
             "coarse_particles": int(np.count_nonzero(level == 0)),
             "wall_particles": snap["counts"].get("wall", 0),
             "obstacle_particles": snap["counts"].get("obstacle", 0),
+            "hill_particles": (
+                snap["counts"].get("obstacle", 0)
+                if self.config.obstacle_mode == "hill" else 0
+            ),
+            "hill": snap.get("hill"),
             "mass": mass,
             "mass_drift": _relative_residual(
                 self.initial_mass, mass, abs(self.initial_mass)

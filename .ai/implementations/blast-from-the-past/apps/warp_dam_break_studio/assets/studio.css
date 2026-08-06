@@ -117,12 +117,14 @@ html, body, #app { background: var(--studio-bg); overflow: hidden; }
   text-transform: uppercase; color: var(--text-2); min-height: 46px;
 }
 .segmented {
-  width: 100%; height: auto !important;
+  width: 100%; height: auto !important; display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border: 1px solid var(--studio-line); border-radius: var(--r-sm);
   overflow: hidden;
 }
 .segmented .v-btn {
-  flex: 1 1 0; font-size: .72rem; font-weight: 650; letter-spacing: .02em;
+  min-width: 0 !important; width: 100%; padding-inline: 5px !important;
+  font-size: .69rem; font-weight: 650; letter-spacing: .01em;
   text-transform: none; height: 38px !important;
 }
 .launch-btn {
@@ -178,6 +180,33 @@ html, body, #app { background: var(--studio-bg); overflow: hidden; }
 .viewport-remote {
   position: absolute !important; inset: 0; width: 100%; height: 100%;
   z-index: 1; background: transparent !important;
+}
+.surface-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3;
+  display: block; touch-action: none; cursor: grab;
+  background: radial-gradient(circle at 50% 10%, #112944, #050913 70%);
+}
+.surface-canvas:active { cursor: grabbing; }
+.geospatial-canvas {
+  background: linear-gradient(180deg, #6a99b1 0%, #b3c8be 42%, #263b30 100%);
+}
+.surface-toggle {
+  border: 1px solid rgba(79, 185, 216, .22);
+  border-radius: 9px; overflow: hidden;
+}
+.surface-toggle .v-btn { min-width: 82px; font-size: .68rem; }
+.surface-status {
+  position: absolute; left: 18px; top: 16px; z-index: 5;
+  display: flex; gap: 9px; align-items: center; padding: 7px 11px;
+  color: #78e8e7; background: rgba(7, 17, 33, .75);
+  border: 1px solid var(--studio-line-strong); border-radius: 999px;
+  font-size: .60rem; font-weight: 700; letter-spacing: .12em;
+  pointer-events: none; backdrop-filter: blur(14px);
+}
+.surface-status span + span { color: var(--text-3); }
+.surface-error {
+  position: absolute !important; left: 18px; top: 58px; z-index: 7;
+  width: min(440px, calc(100% - 36px));
 }
 .viewport-sizer {
   position: absolute; inset: 0; z-index: 0; pointer-events: none;

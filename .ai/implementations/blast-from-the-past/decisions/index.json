@@ -149,6 +149,91 @@
       "from": "ADR-0011",
       "to": "ADR-0006",
       "type": "depends_on"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0003",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0005",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0006",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0008",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0011",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0003",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0012",
+      "to": "ADR-0005",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0013",
+      "to": "ADR-0006",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0013",
+      "to": "ADR-0012",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0013",
+      "to": "ADR-0012",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0014",
+      "to": "ADR-0005",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0014",
+      "to": "ADR-0012",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0014",
+      "to": "ADR-0013",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0014",
+      "to": "ADR-0012",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0014",
+      "to": "ADR-0013",
+      "type": "depends_on"
+    },
+    {
+      "from": "ADR-0015",
+      "to": "ADR-0012",
+      "type": "relates_to"
+    },
+    {
+      "from": "ADR-0015",
+      "to": "ADR-0014",
+      "type": "relates_to"
     }
   ],
   "nodes": [
@@ -228,6 +313,34 @@
       "id": "ADR-0011",
       "scope": "warp-backend",
       "status": "Proposed"
+    },
+    {
+      "date": "2026-08-05",
+      "file": "decisions/2026-08-05_adr-0012_adopt-a-separate-position-based-gameplay-solver-profile.md",
+      "id": "ADR-0012",
+      "scope": "warp-backend",
+      "status": "Accepted"
+    },
+    {
+      "date": "2026-08-05",
+      "file": "decisions/2026-08-05_adr-0013_render-gameplay-fluid-with-client-webgpu-screen-space-reconstruction.md",
+      "id": "ADR-0013",
+      "scope": "host-integration",
+      "status": "Accepted"
+    },
+    {
+      "date": "2026-08-06",
+      "file": "decisions/2026-08-06_adr-0014_use-nasadem-terrain-with-a-warp-shallow-water-geospatial-gameplay-profile.md",
+      "id": "ADR-0014",
+      "scope": "warp-backend",
+      "status": "Accepted"
+    },
+    {
+      "date": "2026-08-06",
+      "file": "decisions/2026-08-06_adr-0015_add-a-procedural-smooth-hill-boundary-to-an-isolated-terrain-wcsph-profile.md",
+      "id": "ADR-0015",
+      "scope": "warp-backend",
+      "status": "Accepted"
     }
   ]
 }

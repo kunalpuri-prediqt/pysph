@@ -1,6 +1,6 @@
 # Current - blast-from-the-past
 
-Updated: 2026-08-05T14:35:00 CEST by codex
+Updated: 2026-08-06T16:46:00 CEST by codex
 
 **Status:** The Warp dam-break composes dynamic two-level fluid resolution, a
 Liu-coupled floating 6-DOF body, tank contact, restartable quaternion pose, and
@@ -10,6 +10,59 @@ hydrostatic-interface and matched-time equilibrium gates. The step-900 rerun
 passes surge, height, COM, finite/mass/contact-geometry gates while failing
 energy, angular impulse, merge, and particle reduction. This remains an
 experimental prototype, not production APR.
+
+**Gameplay checkpoint (2026-08-06):** ADR-0012 is Accepted for a separate,
+explicitly approximate `Gameplay · fast` studio column. The measured Fast
+profile has 1,000 fluid particles; Rich uses 7,020 for local presentation.
+Both use a device Warp `HashGrid`, three bounded density projections per
+`1/60 s` frame, XSPH smoothing, analytic tank bounds, and a bounded
+impulse-coupled quaternion box. Rich completed 250 steps with solver median
+`2.345 ms`; Fast remains the 96-KiB transport baseline. Gameplay rejects
+spacing below `0.04 m`, Cancel preempts a CUDA-bound worker after a short
+grace period, and rotated-box support replaces the hovering bounding-sphere
+floor clamp. Full Warp separation is `79 passed`; studio/transport is `34`.
+
+**Gameplay presentation checkpoint (2026-08-06):** ADR-0013 is Accepted.
+Gameplay defaults to a display-only client WebGPU screen-space surface with an
+explicit VTK Particles fallback; Adaptive/Uniform remain VTK-only. Warp emits
+smoothed centers and bounded anisotropic frames without mutating PBF state.
+At a 1280x720 Edge 151 viewport on the NVIDIA Blackwell adapter, WebGPU
+completion measured `3.30/5.80 ms` median/p95, upload `0.00/0.10 ms`, server
+packing `0.182/0.224 ms`, and the Fast versioned frame is 85,336 bytes with zero
+dropped/stale replay frames. Final/depth/thickness/normal views, moving body,
+camera, resize, replay, and Surface/Particles switching passed. Node `6`,
+studio/transport `34`, and Warp separation `79` tests pass. The tuned Rich
+view renders near `4.0 ms` but its 599,040-byte base64 frame is local-only
+quality evidence pending binary transport or display decimation. Review:
+`reviews/2026-08-05_warp-webgpu-fluid-surface-renderer.md`.
+
+**Geospatial checkpoint (2026-08-06):** ADR-0014 is Accepted for an isolated
+fourth `Geospatial` profile. A 256² Warp finite-volume SWE path evolves
+`(h, hu, hv)` with Rusanov fluxes, hydrostatic reconstruction, CFL stepping,
+wet/dry positivity, Manning friction and explicit boundaries; the regular
+terrain/water grids use a dedicated WebGPU renderer. The exact worker measured
+`0.346/1.425 ms` solver median/p95 and `6.04e-8` volume drift over 300 steps;
+the editor browser measured `7.70/19.80 ms` WebGPU completion median/p95 with
+a 341.3-KiB dynamic frame. Warp separation is `86 passed`, studio/transport/
+importer `47`, and Node WebGPU `11`. Official NASADEM N43E006 acquisition is
+blocked by Earthdata HTTP 401; the app therefore visibly uses the deterministic
+fixture. The strict importer and automatic prepared-asset routing are ready,
+and no third-party DEM was substituted. Review:
+`reviews/2026-08-06_warp-nasadem-shallow-water-geospatial-demo.md`.
+
+**Terrain SPH checkpoint (2026-08-06):** ADR-0015 is Accepted for an isolated
+fifth `Terrain SPH` profile. It routes the established uniform 3D Warp WCSPH
+solver through 72 stationary solid particles sampled beneath a bounded
+Gaussian hill and renders the same parameters as a smooth VTK surface. A
+matched 250-step `dx=0.1` comparison is finite with zero fluid-mass drift and
+bitwise-stationary hill coordinates; versus the flat case, 503/1,000 fluid
+particles move by more than 1 mm, RMS change is 9.76 mm, maximum change is
+13.58 cm, and the surge front is 3.11 cm behind. Warm hill cost is 8.13 ms/step
+versus 5.34 ms flat on the RTX 5090. The editor-browser run completed 250/250
+and shows the physical water front against the smooth hill. This is a
+procedural interaction smoke, not NASADEM, terrain convergence, adaptation, or
+game-frame-rate evidence. Review:
+`reviews/2026-08-06_warp-terrain-sph-smooth-hill.md`.
 
 **Composition checkpoint (2026-08-04):** `DamBreakConfig.obstacle_mode` now
 selects `none`, `fixed`, or `floating`. Floating mode routes adaptive fluid,
@@ -85,9 +138,10 @@ complete family left the fine region during this short run; merge is covered
 by deterministic controller tests.
 
 **Browser studio:** The local Trame 3/Vuetify 3 app under
-`apps/warp_dam_break_studio/` exposes uniform/adaptive options, physics and
-refinement controls, a VTK particle viewport, scalar coloring, local/remote
-rendering, pause/resume/single-step/cancel, telemetry, and bounded replay.
+`apps/warp_dam_break_studio/` exposes Adaptive/Uniform/Gameplay/Geospatial/
+Terrain SPH,
+physics and refinement controls, VTK and isolated WebGPU viewports, scalar
+coloring, pause/resume/single-step/cancel, telemetry, and bounded replay.
 CUDA runs in a spawned worker; final NPZ and JSON manifest include runtime GPU
 metadata. The worker protocol passed pause/step/resume on the RTX 5090.
 
@@ -114,6 +168,17 @@ scaling, full CPU Application parity, and hands-on studio acceptance remain
 incomplete.
 
 **Active plans:** Tier-2 plan
+`2026-08-06_warp-terrain-sph-smooth-hill` is implemented and ready for owner
+publication; prototype-owner commit/push authorization is recorded. Tier-2 plan
+`2026-08-06_warp-nasadem-shallow-water-geospatial-demo` is implemented through
+the synthetic fallback with prototype-owner commit/push authorization;
+authenticated official NASADEM acquisition/crop remains its explicit
+external-data blocker. Tier-2 plan
+`2026-08-05_warp-webgpu-fluid-surface-renderer` and its parent
+`2026-08-05_warp-gameplay-pbf-dam-break-column` are completed and
+prototype-owner commit/push authorization is recorded. Non-local latency,
+binary transport,
+and secondary spray/foam remain follow-ups. Tier-2 plan
 `2026-08-05_warp-separate-h-variable-resolution-gradients` was approved
 verbatim with `"approved"` at 2026-08-05T12:05:00 CEST and is implemented with
 failed physical gates. Its parent

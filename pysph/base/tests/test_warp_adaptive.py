@@ -4,6 +4,10 @@ import pytest
 from pysph.base.warp_adaptive import (
     DamBreakConfig,
     TwoLevelAdaptiveController,
+    WarpDamBreakSimulation,
+    gaussian_hill_height,
+    make_gaussian_hill_particles,
+    particle_state,
 )
 
 
@@ -256,6 +260,13 @@ def test_config_normalizes_legacy_and_explicit_obstacle_modes():
     assert absent.obstacle_mode == "none"
     assert floating.obstacle_mode == "floating"
     assert floating.with_obstacle is True
+    hill = DamBreakConfig.from_mapping({
+        "solver_family": "terrain-wcsph",
+        "resolution_mode": "uniform",
+        "obstacle_mode": "hill",
+    })
+    assert hill.obstacle_mode == "hill"
+    assert hill.solver_family == "terrain-wcsph"
     defaults = DamBreakConfig().to_dict()
     assert defaults["obstacle_mode"] == "fixed"
     assert defaults["variable_h_correction"] is True
@@ -278,6 +289,58 @@ def test_config_rejects_invalid_floating_body_values():
         DamBreakConfig(
             contact_bounds=(1.0, 0.0, -0.25, 0.25, 0.0, 1.5)
         ).validate()
+    with pytest.raises(ValueError, match="hill height"):
+        DamBreakConfig(hill_height=0.0).validate()
+
+
+def test_gaussian_hill_samples_are_deterministic_bounded_and_floor_exclusive():
+    first = make_gaussian_hill_particles(dx=0.05)
+    second = make_gaussian_hill_particles(dx=0.05)
+    np.testing.assert_array_equal(first, second)
+    assert first.shape[1] == 3
+    assert np.all(np.isfinite(first))
+    assert np.min(first[:, 2]) >= 0.05
+    assert np.max(first[:, 2]) <= 0.35 + 0.05
+    assert np.min(first[:, 0]) > 0.0
+    assert np.max(first[:, 0]) < 161.0 / 30.0
+    assert np.min(first[:, 1]) > -0.25
+    assert np.max(first[:, 1]) < 0.25
+    envelope = gaussian_hill_height(first[:, 0], first[:, 1])
+    assert np.all(first[:, 2] <= envelope + 0.25 * 0.05 + 1.0e-12)
+    with pytest.raises(ValueError, match="center"):
+        make_gaussian_hill_particles(dx=0.05, center_x=-1.0)
+    with pytest.raises(ValueError, match="tank height"):
+        make_gaussian_hill_particles(dx=0.05, height=1.6)
+
+
+def test_uniform_terrain_wcsph_hill_is_stationary_and_finite():
+    simulation = WarpDamBreakSimulation(DamBreakConfig(
+        solver_family="terrain-wcsph",
+        resolution_mode="uniform",
+        obstacle_mode="hill",
+        dx=0.1,
+        steps=8,
+        n_damp=2,
+        device="cuda:0",
+    ))
+    initial = simulation.initialize()
+    mask = initial["kind"] == 2
+    hill_before = initial["xyz"][mask].copy()
+    assert len(hill_before) == initial["counts"]["obstacle"] > 0
+    assert initial["hill"]["height"] == pytest.approx(0.35)
+    hill_state = particle_state(simulation.particles[2])
+    np.testing.assert_allclose(hill_state["h"], 0.13)
+    np.testing.assert_allclose(hill_state["m"], 1.0)
+    np.testing.assert_allclose(hill_state["rho"], 1000.0)
+    for _ in range(simulation.config.steps):
+        simulation.step()
+    final = simulation.snapshot(include_solids=True)
+    metrics = simulation.metrics()
+    np.testing.assert_array_equal(final["xyz"][final["kind"] == 2], hill_before)
+    assert metrics["solver_family"] == "terrain-wcsph"
+    assert metrics["hill_particles"] == len(hill_before)
+    assert metrics["all_finite"]
+    assert abs(metrics["mass_drift"]) <= 1.0e-12
 
 
 def test_invalid_controller_configuration_is_rejected():

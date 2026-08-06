@@ -48,16 +48,37 @@ def _worker_main(config, command_queue, result_queue, snapshot_stride):
             "status": "initializing",
             "detail": "Building particles and initializing Warp",
         })
-        from pysph.base.warp_adaptive import (
-            DamBreakConfig,
-            WarpDamBreakSimulation,
-        )
-
         solver_config = dict(config)
         output = solver_config.pop("output", None)
-        simulation = WarpDamBreakSimulation(
-            DamBreakConfig.from_mapping(solver_config)
-        )
+        solver_family = solver_config.pop("solver_family", "wcsph")
+        if solver_family == "gameplay-pbf":
+            from pysph.base.warp_game import (
+                GameplayDamBreakConfig,
+                WarpGameplayDamBreakSimulation,
+            )
+
+            simulation = WarpGameplayDamBreakSimulation(
+                GameplayDamBreakConfig.from_mapping(solver_config)
+            )
+        elif solver_family == "geospatial-swe":
+            from pysph.base.warp_shallow_water import (
+                ShallowWaterConfig,
+                WarpShallowWaterSimulation,
+            )
+
+            simulation = WarpShallowWaterSimulation(
+                ShallowWaterConfig.from_mapping(solver_config)
+            )
+        else:
+            from pysph.base.warp_adaptive import (
+                DamBreakConfig,
+                WarpDamBreakSimulation,
+            )
+
+            solver_config["solver_family"] = solver_family
+            simulation = WarpDamBreakSimulation(
+                DamBreakConfig.from_mapping(solver_config)
+            )
         started = time.perf_counter()
         first = simulation.initialize()
         put_latest(result_queue, {
@@ -69,7 +90,11 @@ def _worker_main(config, command_queue, result_queue, snapshot_stride):
         put_latest(result_queue, {
             "type": "status",
             "status": "running",
-            "detail": "GPU solver running",
+            "detail": {
+                "gameplay-pbf": "Approximate gameplay PBF running",
+                "geospatial-swe": "Depth-averaged terrain flow running",
+                "terrain-wcsph": "Uniform terrain WCSPH running",
+            }.get(solver_family, "GPU solver running"),
         })
 
         paused = False
@@ -245,14 +270,24 @@ class SolverWorker:
                 break
         return messages
 
-    def close(self, timeout=2.0):
+    def cancel(self, timeout=0.25):
+        """Cancel cooperatively, then preempt a worker stuck inside a step."""
+        if self.process is None:
+            return False
+        if self.process.is_alive():
+            self.send("cancel")
+            self.process.join(timeout)
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(timeout)
+        if self.process.is_alive():
+            self.process.kill()
+            self.process.join(timeout)
+        self._release()
+        return True
+
+    def _release(self):
         if self.process is not None:
-            if self.process.is_alive() and self.command_queue is not None:
-                self.send("shutdown")
-                self.process.join(timeout)
-            if self.process.is_alive():
-                self.process.terminate()
-                self.process.join(timeout)
             self.process.close()
         for queue in (self.command_queue, self.result_queue):
             if queue is not None:
@@ -261,6 +296,16 @@ class SolverWorker:
         self.process = None
         self.command_queue = None
         self.result_queue = None
+
+    def close(self, timeout=2.0):
+        if self.process is not None:
+            if self.process.is_alive() and self.command_queue is not None:
+                self.send("shutdown")
+                self.process.join(timeout)
+            if self.process.is_alive():
+                self.process.terminate()
+                self.process.join(timeout)
+        self._release()
 
 
 class FrameBuffer:
